@@ -110,8 +110,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PERF-03 | Phase 4 | Pending |
 | SITE-01 | Phase 2 | Pending |
 | SITE-02 | Phase 2 | Pending |
-| UX-01 | Phase 3 | Pending |
-| UX-02 | Phase 3 | Pending |
+| UX-01 | Phase 1 | Pending |
+| UX-02 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 16 total
