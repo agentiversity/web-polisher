@@ -1,6 +1,7 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { browser } from 'wxt/browser';
 import { transform, getApiKey } from '../utils/llmClient';
+import { API_KEY_STORAGE_KEY } from '../utils/settings';
 
 /**
  * Text Polisher background service worker (design D4).
@@ -90,6 +91,24 @@ export default defineBackground(() => {
           }
         })();
         return true; // asynchronous sendResponse
+      }
+
+      // TEST-ONLY (Selenium harness): store the API key the way the app reads it.
+      // Not reachable from real pages; used to seed storage for automated E2E.
+      if (
+        message && typeof message === 'object' &&
+        (message as { type?: string }).type === 'set-test-key' &&
+        typeof (message as { key?: unknown }).key === 'string'
+      ) {
+        void (async () => {
+          try {
+            await browser.storage.local.set({ [API_KEY_STORAGE_KEY]: (message as { key: string }).key });
+            sendResponse({ ok: true });
+          } catch {
+            sendResponse({ ok: false });
+          }
+        })();
+        return true;
       }
 
       // Return undefined (and don't call sendResponse) for unhandled messages.

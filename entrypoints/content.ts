@@ -92,5 +92,35 @@ export default defineContentScript({
       }
       return undefined;
     });
+
+    // WebDriver-only automation bridge (e2e/Firefox Selenium harness). Never
+    // active in real browsing: only when Firefox is under Selenium/geckodriver.
+    if (navigator.webdriver) {
+      const runPolish = () => {
+        // Ack via a persistent DOM marker (events may not cross content/page worlds).
+        document.documentElement.setAttribute('data-text-polisher-ack', 'true');
+        void polishContent(window.location.hostname)
+          .then((result) => {
+            document.documentElement.setAttribute('data-text-polisher-done', JSON.stringify({ replaced: result.applied, notConfigured: result.notConfigured }));
+          })
+          .catch((err) => document.documentElement.setAttribute('data-text-polisher-err', String(err)));
+      };
+      window.addEventListener('textpolisher:apply', runPolish);
+      // WebDriver-only: seed the API key. Reads it from a DOM attribute (which
+      // crosses content/page worlds in Firefox), then forwards to the background,
+      // which stores it in the same storage `getApiKey` reads.
+      window.addEventListener('textpolisher:setkey', () => {
+        const k = document.documentElement.getAttribute('data-seed-key');
+        if (k && navigator.webdriver) {
+          void browser.runtime
+            .sendMessage({ type: 'set-test-key', key: k } as never)
+            .then(() => document.documentElement.setAttribute('data-seed-done', 'true'))
+            .catch(() => document.documentElement.setAttribute('data-seed-done', 'err'));
+        }
+      });
+      // Tell the harness the content script injected successfully (persistent
+      // marker so a late-attaching Selenium can poll it).
+      document.documentElement.setAttribute('data-text-polisher-injected', 'true');
+    }
   },
 });
