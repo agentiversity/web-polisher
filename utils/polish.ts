@@ -70,6 +70,23 @@ export function collectEligibleTextNodes(
 
 const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, notConfigured: false };
 
+/** Collapse whitespace (trim + single spaces) for a visible-text comparison. */
+function collapseWhitespace(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * True when two strings differ in a way a reader would actually notice.
+ * Treats whitespace-only and case-only differences as "unchanged".
+ */
+export function isMeaningfullyChanged(original: string, polished: string): boolean {
+  const a = collapseWhitespace(original);
+  const b = collapseWhitespace(polished);
+  if (a === b) return false;
+  if (a.toLowerCase() === b.toLowerCase()) return false;
+  return true;
+}
+
 /**
  * Polish every detected user-content block on the page: detect roots →
  * collect eligible text nodes → `transform-text` to background → apply results
@@ -120,8 +137,19 @@ export async function polishContent(hostname: string): Promise<PolishResult> {
     if (!node.isConnected) continue;
     const parent = node.parentElement;
     if (!parent || parent.hasAttribute(PROCESSED_ATTR)) continue;
-    if (res.text === node.textContent) continue; // model returned it unchanged
-    node.textContent = res.text;
+    const original = node.textContent ?? '';
+    // Only highlight/rewrite when the change is one a reader would notice
+    // (never for whitespace- or case-only differences).
+    if (!isMeaningfullyChanged(original, res.text)) continue;
+    // Wrap the rewrite in a highlighted span so the user can see what changed;
+    // the original text is exposed as a native tooltip on hover.
+    const span = document.createElement('span');
+    span.className = 'text-polished';
+    span.title = original;
+    span.textContent = res.text;
+    span.style.setProperty('background-color', '#cfe4f7'); // light blue
+    span.style.setProperty('border-radius', '2px');
+    node.replaceWith(span);
     applied++;
   }
 

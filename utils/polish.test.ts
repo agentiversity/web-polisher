@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { polishContent, collectEligibleTextNodes } from './polish';
+import { polishContent, collectEligibleTextNodes, isMeaningfullyChanged } from './polish';
 import { PROCESSED_ATTR } from './textReplacer';
 import { MIN_TEXT_LENGTH } from './settings';
-
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
 }));
@@ -155,5 +154,21 @@ describe('polishContent', () => {
 describe('MIN_TEXT_LENGTH default', () => {
   it('is a sane positive default used by collection', () => {
     expect(MIN_TEXT_LENGTH).toBeGreaterThan(0);
+  });
+});
+
+describe('isMeaningfullyChanged', () => {
+  it('treats identical text as unchanged', () => {
+    expect(isMeaningfullyChanged('This is fine.', 'This is fine.')).toBe(false);
+  });
+  it('treats whitespace-only differences as unchanged (no highlight)', () => {
+    expect(isMeaningfullyChanged('I  am   here', 'I am here')).toBe(false);
+    expect(isMeaningfullyChanged(' leading', 'leading')).toBe(false);
+  });
+  it('treats case-only differences as unchanged', () => {
+    expect(isMeaningfullyChanged('i am here', 'I am here')).toBe(false);
+  });
+  it('flags real rewording as changed', () => {
+    expect(isMeaningfullyChanged('I am very agree', 'I completely agree')).toBe(true);
   });
 });
