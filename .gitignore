@@ -16,6 +16,10 @@ dist/
 *.log
 npm-debug.log*
 
+# Local environment / secrets (never commit)
+.env
+.env.*
+
 # OS / editor
 .DS_Store
 Thumbs.db

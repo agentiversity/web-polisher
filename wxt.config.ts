@@ -14,6 +14,10 @@ export default defineConfig({
     action: {
       default_title: 'Polish this page',
     },
+    // Reachable in Firefox via about:addons → the add-on's Preferences button.
+    options_ui: {
+      open_in_tab: true,
+    },
     browser_specific_settings: {
       gecko: {
         id: 'text-polisher@example.com',
