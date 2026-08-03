@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# pi local configuration (credentials, tooling, skills) — machine-local, not shared
+.pi/
+
+# Planning research cache (regenerated)
+docs/research/.cache/
+
+# Build output
+dist/
+.output/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# WXT generated directory
+.wxt/

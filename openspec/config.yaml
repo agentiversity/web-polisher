@@ -1,0 +1,44 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  Product: "Text Polisher" — a Firefox extension that passively transforms the
+  user-generated English text users READ (comments, posts) into natural,
+  native-sounding English. Invisible and zero-interaction is the core value.
+
+  Tech stack:
+  - Firefox WebExtensions (MV3) built with WXT 0.20.27 + TypeScript 5.x + Vite.
+  - Cloud LLM: Gemini Flash via @google/generative-ai. All API calls route through
+    the background service worker (content scripts cannot do cross-origin fetches in MV3).
+  - Storage: browser.storage.local for settings, user API keys, and an LRU cache
+    (1000 entries, 7-day TTL).
+  - DOM: native APIs only (TreeWalker, MutationObserver, IntersectionObserver).
+    Never replace whole elements — replace text nodes only, to preserve React/Vue state.
+
+  Architecture: manifest → background service worker (LLM calls, caching, confidence
+  scoring) → content script (content detection, lazy loading, text replacement).
+  Components: Content Detector, Lazy Load Observer (IntersectionObserver, 200px rootMargin),
+  DOM Replacer, Background LLM Client, Options Page (vanilla HTML/CSS/JS).
+
+  Product principles:
+  - On-demand, not always-on: polishing runs ONLY when the user clicks the
+    toolbar action button to apply it to a page; nothing is transformed and no
+    LLM calls are made by default (cost control on cloud LLM).
+  - Invisible after trigger: once the user triggers polishing on a page, it
+    proceeds with no further buttons, popups, or per-item interaction.
+  - Transform ONLY user-generated content; never UI, navigation, or ads.
+  - Small/cheap LLMs only; abort transformations below a confidence threshold.
+  - English-only for v1; local LLM (WebLLM) and site-specific optimizations deferred to v2.
+  - Firefox is the target platform.
+
+  NOTE: this reverses the original "passive & invisible, zero-interaction"
+  positioning. See openspec/changes/explicit-apply-button/ (and FEATURES.md
+  anti-features) for the rationale: always-on auto-transformation wastes
+  cloud-LLM budget on already-polished text.
+
+  Planning/spec home is OpenSpec (openspec/). The historical GSD planning docs
+  (.planning: PROJECT/REQUIREMENTS/ROADMAP/STATE) were removed; the research that
+  informed them is preserved in docs/research/. OpenSpec specs in openspec/specs/
+  cover the capabilities: content-detection, transformation-engine,
+  quality-and-confidence, performance, user-experience.
