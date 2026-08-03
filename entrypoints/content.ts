@@ -23,6 +23,42 @@ interface ApplyPolishMessage {
 /** Session-scoped guard key (design D5: state lives in storage.session). */
 const SESSION_INIT_KEY = 'phase1:content-initialized';
 
+const MODAL_ID = 'text-polisher-modal';
+let modalStyleInjected = false;
+
+/** Inject a tiny stylesheet for the polishing modal (once). */
+function ensureModalStyle(): void {
+  if (modalStyleInjected) return;
+  modalStyleInjected = true;
+  const st = document.createElement('style');
+  st.textContent =
+    `#${MODAL_ID}{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;` +
+    `display:flex;align-items:center;gap:10px;background:rgba(17,17,17,.82);color:#fff;padding:14px 22px;` +
+    `border-radius:10px;font:600 15px/1 system-ui,-apple-system,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}` +
+    `#${MODAL_ID} .tpspin{width:16px;height:16px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;` +
+    `border-radius:50%;animation:tpspin .7s linear infinite}` +
+    `@keyframes tpspin{to{transform:rotate(360deg)}}`;
+  (document.head || document.documentElement).appendChild(st);
+}
+
+/** Show a "Polishing…" modal overlay until the rewritten text has been injected. */
+function showPolishingModal(): void {
+  if (document.getElementById(MODAL_ID)) return;
+  ensureModalStyle();
+  const modal = document.createElement('div');
+  modal.id = MODAL_ID;
+  const spin = document.createElement('span');
+  spin.className = 'tpspin';
+  const label = document.createElement('span');
+  label.textContent = 'Polishing…';
+  modal.append(spin, label);
+  document.body.appendChild(modal);
+}
+
+function hidePolishingModal(): void {
+  document.getElementById(MODAL_ID)?.remove();
+}
+
 export default defineContentScript({
   matches: ['*://*/*'],
   runAt: 'document_idle',
@@ -70,23 +106,28 @@ export default defineContentScript({
         (message as ApplyPolishMessage).type === 'apply-polish'
       ) {
         void (async () => {
-          const result = await polishContent(window.location.hostname);
-          dbg(
-            'polish:',
-            result.applied,
-            'rewritten of',
-            result.requested,
-            'nodes across',
-            result.blocks,
-            'blocks; notConfigured =',
-            result.notConfigured,
-          );
-          sendResponse({
-            ok: true,
-            replaced: result.applied,
-            blocks: result.blocks,
-            notConfigured: result.notConfigured,
-          });
+          showPolishingModal();
+          try {
+            const result = await polishContent(window.location.hostname);
+            dbg(
+              'polish:',
+              result.applied,
+              'rewritten of',
+              result.requested,
+              'nodes across',
+              result.blocks,
+              'blocks; notConfigured =',
+              result.notConfigured,
+            );
+            sendResponse({
+              ok: true,
+              replaced: result.applied,
+              blocks: result.blocks,
+              notConfigured: result.notConfigured,
+            });
+          } finally {
+            hidePolishingModal();
+          }
         })();
         return true; // asynchronous sendResponse
       }
@@ -99,11 +140,13 @@ export default defineContentScript({
       const runPolish = () => {
         // Ack via a persistent DOM marker (events may not cross content/page worlds).
         document.documentElement.setAttribute('data-text-polisher-ack', 'true');
+        showPolishingModal();
         void polishContent(window.location.hostname)
           .then((result) => {
             document.documentElement.setAttribute('data-text-polisher-done', JSON.stringify({ replaced: result.applied, notConfigured: result.notConfigured }));
           })
-          .catch((err) => document.documentElement.setAttribute('data-text-polisher-err', String(err)));
+          .catch((err) => document.documentElement.setAttribute('data-text-polisher-err', String(err)))
+          .finally(() => hidePolishingModal());
       };
       window.addEventListener('textpolisher:apply', runPolish);
       // WebDriver-only: seed the API key. Reads it from a DOM attribute (which
