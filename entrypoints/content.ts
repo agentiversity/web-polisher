@@ -27,7 +27,7 @@ export default defineContentScript({
   matches: ['*://*/*'],
   runAt: 'document_idle',
   async main() {
-    const dbg = (...args: unknown[]) => console.debug('[Text Polisher content]', ...args);
+    const dbg = (...args: unknown[]) => console.log('[Text Polisher content]', ...args);
     dbg('content script loaded');
 
     // 4.4: read per-navigation state from storage.session. Firefox keeps the
