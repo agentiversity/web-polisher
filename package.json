@@ -16,7 +16,8 @@
     "pretest": "wxt prepare",
     "test:e2e": "wxt build -b chrome && node e2e/run-e2e.mjs",
     "test:reddit": "wxt build -b chrome && node e2e/reddit-e2e.mjs",
-    "test:firefox": "wxt build -b firefox && wxt zip -b firefox && node e2e/firefox-e2e.mjs"
+    "test:firefox": "wxt build -b firefox && wxt zip -b firefox && node e2e/firefox-e2e.mjs",
+    "serve:fixture": "node e2e/serve.mjs"
   },
   "dependencies": {
     "@fission-ai/openspec": "^1.7.0",
