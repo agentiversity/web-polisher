@@ -141,9 +141,12 @@ describe('llmClient.transform (batch)', () => {
 });
 
 describe('getApiKey', () => {
-  it('reads a stored key from storage.local', async () => {
+  it('reads a stored key from storage.local using the bare-key form', async () => {
     mocks.storageGet.mockResolvedValue({ [KEY]: 'MY-KEY' });
     await expect(getApiKey()).resolves.toBe('MY-KEY');
+    // Regression: must not use the object form with an `undefined` default, which
+    // Chrome drops (making the extension permanently "not configured").
+    expect(mocks.storageGet).toHaveBeenCalledWith(KEY);
   });
 
   it('returns undefined when no key is stored', async () => {

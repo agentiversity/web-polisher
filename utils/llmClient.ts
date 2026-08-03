@@ -48,7 +48,9 @@ const SYSTEM_PROMPT = [
 
 /** Read the configured API key from storage.local; undefined when not set. */
 export async function getApiKey(): Promise<string | undefined> {
-  const got = await browser.storage.local.get({ [API_KEY_STORAGE_KEY]: undefined });
+  // Use the bare-key form: Chrome drops keys whose default is `undefined` in the
+  // object form, which would make this always return undefined (no-op).
+  const got = await browser.storage.local.get(API_KEY_STORAGE_KEY);
   const v = got[API_KEY_STORAGE_KEY];
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
 }
