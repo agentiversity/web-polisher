@@ -103,8 +103,8 @@ function parseResults(raw: string): string[] | undefined {
     const data = JSON.parse(raw);
     if (Array.isArray(data)) return data.filter((x): x is string => typeof x === 'string');
     if (data && typeof data === 'object') {
-      if (Array.isArray(data.results)) return data.results.filter((x): x is string => typeof x === 'string');
-      if (Array.isArray(data.texts)) return data.texts.filter((x): x is string => typeof x === 'string');
+      if (Array.isArray(data.results)) return data.results.filter((x: unknown): x is string => typeof x === 'string');
+      if (Array.isArray(data.texts)) return data.texts.filter((x: unknown): x is string => typeof x === 'string');
     }
     return undefined;
   } catch {

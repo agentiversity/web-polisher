@@ -1,6 +1,6 @@
 {
   "name": "my-polisher-extension",
-  "description": "Text Polisher — passively transforms user-generated English text into natural, native-sounding language.",
+  "description": "Text Polisher — on demand, rewrites user-generated English text into natural, native-sounding language.",
   "private": true,
   "version": "0.1.0",
   "type": "module",

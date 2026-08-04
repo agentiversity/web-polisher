@@ -12,12 +12,22 @@ You browse as normal; when you want a page's content polished, you click the too
 
 **Phase 2 — Content Detection & Site Support: complete.** On trigger, the extension detects real user content (comments/posts) and excludes UI, nav, ads, buttons, and hidden/screen-reader text — verified on Reddit.
 
+**Phase 3 — LLM Transformation Engine: complete.** The placeholder prefix is gone; text is rewritten for naturalness by Gemini (Flash tier) routed through the background worker.
+
+**Phase 5 — Quality & Confidence: complete.** A deterministic quality gate (token-overlap similarity + length fidelity) rejects low-confidence rewrites before they touch the page; the threshold is tunable in the options page.
+
+**Phase 4 — Performance & Lazy Loading: spec'd but not yet built.**
+
 - ✅ Loads in Firefox without errors
 - ✅ React-safe text replacement (no DOM breakage on Facebook/Reddit)
 - ✅ Click-to-apply toolbar button (nothing transformed by default)
 - ✅ Content detection: polishes user content, leaves UI/buttons/ads untouched
 - ✅ Works across shadow DOM (Reddit shreddit components) and unknown sites
-- ⏳ Phases 3–5 (LLM transformation, performance, quality) are spec'd but not yet built
+- ✅ Real LLM transformation routed through the background worker (MV3 CORS)
+- ✅ Quality gate: low-confidence rewrites never reach the page
+- ✅ Settings: Gemini API key + confidence threshold via an options page
+- ✅ Feedback: "Polishing…" modal, changed text highlighted with original on hover
+- ⏳ Phase 4 (performance & lazy loading) is spec'd but not yet built
 
 ## Requirements
 
@@ -54,31 +64,47 @@ Then in Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add
 3. Click the extension's toolbar button (**"Polish this page"**).
 4. The page's user-generated text is transformed in place.
 
-## What it does today (Phases 1–2)
+## What it does today
 
-- A background service worker and content script skeleton with message passing (content ↔ background), the architecture that later carries LLM requests.
+- A background service worker and content script skeleton with message passing (content ↔ background); all Gemini API traffic routes through the background (MV3 CORS).
 - A **React/Vue-safe text replacer** (`utils/textReplacer.ts`) that walks the DOM with `TreeWalker`, editing **text nodes only** — never whole elements — so React's fiber tree stays intact on sites like Facebook and Reddit.
 - A **click-to-apply action button** that sends an `apply-polish` message from the background to the active tab.
 - A **content detector** (`utils/contentDetector.ts` + `utils/domWalk.ts`) that, on trigger, collects top-most user-content roots (site-specific or heuristic) and skips UI, nav, ads, buttons, non-`<button>` interactive wrappers, and hidden/screen-reader text. It pierces shadow DOM, so it works with Reddit's `shreddit-*` custom elements.
 - A **shadow-DOM-aware walker** (`utils/domWalk.ts`) for detection, replacement, and visibility filtering.
+- An **LLM transformation engine** (`utils/llmClient.ts` + `utils/polish.ts`): eligible text nodes are batched into a `transform-text` message to the background, which calls Gemini and returns results that are applied back to the same text nodes. Failures, timeouts, and no-API-key degrade gracefully with the original text kept.
+- A **quality gate** (`utils/quality.ts`): each model reply is scored (Dice token-overlap + length ratio) and rejected when below the configured confidence threshold.
+- An **options page** (`entrypoints/options/`) to set/remove the Gemini API key and the confidence threshold, persisted in `browser.storage.local`.
+- **Feedback** (`entrypoints/content.ts`): a brief "Polishing…" modal on trigger; rewritten text is wrapped in a highlighted span with the original shown as a tooltip on hover.
 - Per-navigation state kept in `browser.storage.session` to survive Firefox's content-script lifecycle.
-
-> **Note:** the current "transformation" is a deterministic `[text-polisher] …` placeholder (prefix) used to prove the DOM mechanics. Real LLM transformation arrives in **Phase 3**.
 
 ## Project structure
 
 ```
 entrypoints/
-  background.ts        Background service worker (message handler, action-button forwarding)
-  content.ts           Content script (document_idle; applies polish on trigger)
+  background.ts        Background service worker (message handler, LLM client, action-button forwarding)
+  content.ts           Content script (document_idle; applies polish on trigger, modal + highlight feedback)
+  options/             Options page (Gemini API key + confidence threshold)
 utils/
   contentDetector.ts   Content detection: site registry, exclusions, content roots
   contentDetector.test.ts
   domWalk.ts           Shadow-DOM-aware traversal + visibility filtering
+  domWalk.test.ts
   textReplacer.ts      TreeWalker text-node replacement + UI-element exclusion guard
-  textReplacer.test.ts Unit tests
+  textReplacer.test.ts
+  polish.ts            Content-side orchestration: detect → collect → transform-text → apply
+  polish.test.ts
+  llmClient.ts         Background Gemini client: batching, timeout, error taxonomy
+  llmClient.test.ts
+  quality.ts           Confidence score + length-fidelity gate for LLM output
+  quality.test.ts
+  settings.ts          Shared constants (storage keys, model, batch/timeout limits)
+  live.integration.test.ts  jsdom end-to-end of the full polish flow
+e2e/                   Selenium/Playwright E2E harnesses (Firefox, Chrome, Reddit)
+public/icon/           Toolbar/listing icons (16/32/48/128 PNG)
+scripts/
+  generate-icons.mjs   Regenerates public/icon/*.png (pure Node, no deps)
 openspec/
-  specs/               OpenSpec capability specs (7: text-replacement, user-actions, content-detection, ...)
+  specs/               OpenSpec capability specs (8: text-replacement, user-actions, content-detection, transformation-engine, quality-and-confidence, settings, user-experience, performance)
   changes/archive/     Completed, archived changes
 docs/research/         Researched findings (pitfalls, architecture, stack)
 wxt.config.ts          WXT build config incl. Firefox MV3 manifest
@@ -91,7 +117,7 @@ wxt.config.ts          WXT build config incl. Firefox MV3 manifest
 | Extension framework | [WXT](https://wxt.dev) 0.21 (Vite-based) |
 | Platform | Firefox Manifest V3 |
 | Language | TypeScript |
-| DOM | Native APIs only (`TreeWalker`, `MutationObserver`, `IntersectionObserver`) |
+| DOM | Native APIs only (`TreeWalker` for text traversal; `MutationObserver`/`IntersectionObserver` planned for Phase 4) |
 | Storage | `browser.storage.*` (local / session) |
 | Testing | Vitest + jsdom |
 
@@ -102,14 +128,15 @@ wxt.config.ts          WXT build config incl. Firefox MV3 manifest
 | 1 | Foundation & Safe Text Replacement (`text-replacement`) | ✅ archived |
 | 1 | Explicit apply button (`user-actions`) | ✅ archived |
 | 2 | Content Detection & Site Support (`content-detection`) | ✅ archived |
-| 3 | LLM Transformation Engine (`transformation-engine`) | ⏳ not started |
+| 3 | LLM Transformation Engine (`transformation-engine`) | ✅ archived |
+| 3 | Settings: API key + confidence threshold (`settings`) | ✅ archived |
+| 3 | User Experience: modal + highlight feedback (`user-experience`) | ✅ archived |
+| 5 | Quality & Confidence (`quality-and-confidence`) | ✅ archived |
 | 4 | Performance & Lazy Loading (`performance`) | ⏳ not started |
-| 5 | Quality & Confidence (`quality-and-confidence`) | ⏳ not started |
 
 ## Known findings (to address in later phases)
 
 - **Dynamic content:** Reddit virtualizes its feed, so only posts in the DOM at click time get transformed. Handling infinite scroll / newly-mounted content is **Phase 4**.
-- **Real transformation:** the current `[text-polisher] …` prefix is a placeholder; actual LLM natural-language transformation is **Phase 3**.
 
 ## License
 

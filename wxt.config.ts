@@ -7,12 +7,22 @@ export default defineConfig({
   manifest: {
     name: 'Text Polisher',
     description:
-      'Passively transforms user-generated English text into natural, native-sounding language.',
+      'On demand, rewrites user-generated English text into natural, native-sounding language.',
     version: '0.1.0',
     permissions: ['storage', 'activeTab'],
     host_permissions: ['*://*/*'],
+    icons: {
+      16: 'icon/16.png',
+      32: 'icon/32.png',
+      48: 'icon/48.png',
+      128: 'icon/128.png',
+    },
     action: {
       default_title: 'Polish this page',
+      default_icon: {
+        16: 'icon/16.png',
+        32: 'icon/32.png',
+      },
     },
     // Reachable in Firefox via about:addons → the add-on's Preferences button.
     options_ui: {
