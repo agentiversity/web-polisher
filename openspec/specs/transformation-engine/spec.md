@@ -1,8 +1,6 @@
 ## Purpose
 Transform user-generated English text for naturalness and fluency (not just grammar and spelling correction) using small, cost-effective LLMs via an API, operating entirely passively with no user interaction.
-
 ## Requirements
-
 ### Requirement: Transform for naturalness
 The extension SHALL transform text for naturalness and fluency, going beyond grammar and spelling correction.
 
@@ -13,6 +11,10 @@ The extension SHALL transform text for naturalness and fluency, going beyond gra
 #### Scenario: Short content left alone
 - **WHEN** text is already natural or too short to transform confidently
 - **THEN** the extension leaves it unchanged
+
+#### Scenario: Failed transform leaves original intact
+- **WHEN** an LLM call for a text node fails, times out, or returns no usable result
+- **THEN** the original text is kept and no placeholder, empty, or partial rewrite is applied
 
 ### Requirement: Preserve original meaning
 The extension SHALL preserve the original meaning and intent during transformation.
@@ -42,3 +44,8 @@ The extension SHALL support small, cost-effective LLMs (e.g. Gemini Flash) acces
 #### Scenario: Requests routed through the background worker
 - **WHEN** a content script needs the LLM to transform text
 - **THEN** the request is forwarded to the background service worker, which performs the API call (to satisfy MV3 CORS restrictions)
+
+#### Scenario: No calls without configuration
+- **WHEN** no API key is configured
+- **THEN** the extension makes no LLM call and leaves the text unchanged
+
