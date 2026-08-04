@@ -69,7 +69,17 @@ async function main() {
   });
   try {
     let sw = ctx.serviceWorkers()[0]; if (!sw) sw = await ctx.waitForEvent('serviceworker',{timeout:15000});
-    await sw.evaluate(async k => { await chrome.storage.local.set({'gemini:apiKey':k}); }, key);
+    await sw.evaluate(async k => {
+      await chrome.storage.local.set({
+        'llm:config': {
+          providerId: 'google',
+          baseUrl: 'https://generativelanguage.googleapis.com',
+          apiCompatibility: 'gemini',
+          model: 'gemini-3.1-flash-lite',
+          apiKey: k,
+        },
+      });
+    }, key);
 
     const page = await ctx.newPage();
     await page.route(URL, r => r.fulfill({ status:200, contentType:'text/html', body: HTML }));

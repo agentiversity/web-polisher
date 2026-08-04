@@ -53,16 +53,37 @@ form label {
   margin-bottom: 0.35rem;
 }
 
-input#api-key, input#confidence-threshold {
+input, select {
   width: 100%;
   padding: 0.55rem 0.65rem;
   font-size: 1rem;
   border: 1px solid #c7c7cc;
   border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+input#api-key, input#confidence-threshold, input#model-input, input#custom-name, input#custom-url {
+  width: 100%;
+}
+
+.field-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.field.grow {
+  flex: 1;
+}
+
+button.side {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem;
 }
 
 @media (prefers-color-scheme: dark) {
-  input#api-key, input#confidence-threshold {
+  input, select {
     border-color: #48484a;
     background: #1c1c1e;
     color: #fff;

@@ -28,7 +28,7 @@ import { polishContent } from './polish';
 import { transform } from './llmClient';
 
 const KEY_ENV = 'GEMINI_API_KEY';
-const STORAGE_KEY = 'gemini:apiKey';
+const STORAGE_KEY = 'llm:config';
 const apiKey = (process.env[KEY_ENV] ?? '').trim();
 const hasKey = apiKey.length > 0;
 
@@ -120,7 +120,15 @@ describe.skipIf(!hasKey)('live end-to-end (real Gemini)', () => {
 
   beforeAll(async () => {
     installDom();
-    mocks.storageGet.mockImplementation(async () => ({ [STORAGE_KEY]: apiKey }));
+    mocks.storageGet.mockImplementation(async () => ({
+      [STORAGE_KEY]: {
+        providerId: 'google',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        apiCompatibility: 'gemini',
+        model: 'gemini-3.1-flash-lite',
+        apiKey,
+      },
+    }));
     // The content script's sendMessage is wired to the REAL llmClient.transform,
     // which makes a genuine call to the Gemini API.
     mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) => {

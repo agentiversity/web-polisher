@@ -1,7 +1,7 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { browser } from 'wxt/browser';
-import { transform, getApiKey } from '../utils/llmClient';
-import { API_KEY_STORAGE_KEY, MAX_TEXT_LENGTH } from '../utils/settings';
+import { transform, getLlmConfig } from '../utils/llmClient';
+import { DEFAULT_GEMINI_MODEL, LLM_CONFIG_KEY, MAX_TEXT_LENGTH } from '../utils/settings';
 
 /**
  * Text Polisher background service worker (design D4).
@@ -74,7 +74,7 @@ export default defineBackground(() => {
         Array.isArray((message as TransformTextMessage).texts)
       ) {
         const texts = (message as TransformTextMessage).texts.slice(0, MAX_TEXT_LENGTH);
-        const notConfiguredPromise = getApiKey().then((k) => k === undefined);
+        const notConfiguredPromise = getLlmConfig().then((c) => c === undefined);
         void (async () => {
           try {
             const results = await transform(texts);
@@ -93,8 +93,8 @@ export default defineBackground(() => {
         return true; // asynchronous sendResponse
       }
 
-      // TEST-ONLY (Selenium harness): store the API key the way the app reads it.
-      // Not reachable from real pages; used to seed storage for automated E2E.
+      // TEST-ONLY (Selenium harness): store a Gemini config the way the app reads
+      // it. Not reachable from real pages; used to seed storage for automated E2E.
       if (
         message && typeof message === 'object' &&
         (message as { type?: string }).type === 'set-test-key' &&
@@ -102,7 +102,15 @@ export default defineBackground(() => {
       ) {
         void (async () => {
           try {
-            await browser.storage.local.set({ [API_KEY_STORAGE_KEY]: (message as { key: string }).key });
+            await browser.storage.local.set({
+              [LLM_CONFIG_KEY]: {
+                providerId: 'google',
+                baseUrl: 'https://generativelanguage.googleapis.com',
+                apiCompatibility: 'gemini',
+                model: DEFAULT_GEMINI_MODEL,
+                apiKey: (message as { key: string }).key,
+              },
+            });
             sendResponse({ ok: true });
           } catch {
             sendResponse({ ok: false });

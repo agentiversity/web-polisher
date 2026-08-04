@@ -93,7 +93,15 @@ async function main() {
 
     // Set the API key in storage.local
     await sw.evaluate(async (k) => {
-      await chrome.storage.local.set({ 'gemini:apiKey': k });
+      await chrome.storage.local.set({
+        'llm:config': {
+          providerId: 'google',
+          baseUrl: 'https://generativelanguage.googleapis.com',
+          apiCompatibility: 'gemini',
+          model: 'gemini-3.1-flash-lite',
+          apiKey: k,
+        },
+      });
     }, apiKey);
 
     const page = await context.newPage();
@@ -178,7 +186,7 @@ async function main() {
     check('Re-click is idempotent (no further changes)', stable);
 
     // ---- CASE 3: no-op without key ----
-    await sw.evaluate(() => chrome.storage.local.remove('gemini:apiKey'));
+    await sw.evaluate(() => chrome.storage.local.remove('llm:config'));
     // New page load so roots are un-marked and eligible again.
     await page.reload();
     await page.waitForTimeout(500);

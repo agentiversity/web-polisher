@@ -2,18 +2,46 @@
  * Shared tunable constants for the LLM transformation engine.
  *
  * Both the background worker (`llmClient.ts`) and the options page read the
- * API-key storage key and model/limits from here so the two never drift
+ * config key, provider index, and limits from here so the two never drift
  * apart. These are product constants, not per-user state.
  */
 
-/** Storage key under which the user's Gemini API key is persisted (storage.local). */
-export const API_KEY_STORAGE_KEY = 'gemini:apiKey';
+/** Storage key under which the single active LLM config is persisted (storage.local). */
+export const LLM_CONFIG_KEY = 'llm:config';
 
-/** Gemini model used for transformation (small/cheap Flash tier).
- *  gemini-3.1-flash-lite is the high-throughput, lowest-cost Flash tier on the
- *  free tier (older 2.0/2.5-flash names 404 on current projects). Tunable per
- *  account — see the models list at /v1beta/models with a key. */
-export const API_MODEL = 'gemini-3.1-flash-lite';
+/** Storage key for the cached well-known providers index (storage.local). */
+export const PROVIDERS_INDEX_CACHE_KEY = 'providers:index';
+
+/** How long the fetched provider index stays cached before refresh. */
+export const PROVIDERS_INDEX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+/** Remote index of well-known providers + their models (models.dev powers opencode). */
+export const MODELS_INDEX_URL = 'https://models.dev/api.json';
+
+/** Storage key for per-provider model lists fetched live from providers. */
+export const PROVIDER_MODELS_CACHE_KEY = 'providers:models';
+
+/** How long a live-fetched model list stays cached before refresh. */
+export const PROVIDER_MODELS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+
+/** API wire formats the client can speak. */
+export type ApiCompatibility = 'openai' | 'anthropic' | 'gemini';
+
+/** Default Gemini model, used to seed configs in tests/E2E and as the Google bundle default. */
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite';
+
+/** The single active provider/model/key configuration. */
+export interface LlmConfig {
+  /** Provider id from the registry, or 'custom'. */
+  providerId: string;
+  /** Display name when providerId === 'custom'. */
+  customName?: string;
+  /** Base URL for custom providers (openai/anthropic: ends /v1; gemini: API root). */
+  baseUrl?: string;
+  apiCompatibility: ApiCompatibility;
+  model: string;
+  apiKey: string;
+}
 
 /** Minimum trimmed text length before a node is considered transformable. */
 export const MIN_TEXT_LENGTH = 12;

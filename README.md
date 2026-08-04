@@ -12,7 +12,7 @@ You browse as normal; when you want a page's content polished, you click the too
 
 **Phase 2 — Content Detection & Site Support: complete.** On trigger, the extension detects real user content (comments/posts) and excludes UI, nav, ads, buttons, and hidden/screen-reader text — verified on Reddit.
 
-**Phase 3 — LLM Transformation Engine: complete.** The placeholder prefix is gone; text is rewritten for naturalness by Gemini (Flash tier) routed through the background worker.
+**Phase 3 — LLM Transformation Engine: complete.** The placeholder prefix is gone; text is rewritten for naturalness by the selected LLM, routed through the background worker. Supports OpenAI-compatible, Anthropic-compatible, and Gemini-compatible providers.
 
 **Phase 5 — Quality & Confidence: complete.** A deterministic quality gate (token-overlap similarity + length fidelity) rejects low-confidence rewrites before they touch the page; the threshold is tunable in the options page.
 
@@ -25,11 +25,13 @@ You browse as normal; when you want a page's content polished, you click the too
 - ✅ Works across shadow DOM (Reddit shreddit components) and unknown sites
 - ✅ Real LLM transformation routed through the background worker (MV3 CORS)
 - ✅ Quality gate: low-confidence rewrites never reach the page
-- ✅ Settings: Gemini API key + confidence threshold via an options page
+- ✅ Settings: any provider (well-known or custom) + model + API key, with "Test connection", via an options page
 - ✅ Feedback: "Polishing…" modal, changed text highlighted with original on hover
 - ✅ Lazy, viewport-gated processing: in-view content first, rest on scroll
 - ✅ Dynamic-content pickup (infinite scroll / virtualization) after the click
 - ✅ Bounded LRU result cache (storage.local) — no re-transforming the same text
+
+> **Breaking change (0.2.0):** configuration moved from the old Gemini-only key to a provider config (`llm:config`). Existing users re-enter their API key once in the new options page.
 
 ## Requirements
 
@@ -73,11 +75,12 @@ Then in Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add
 - A **click-to-apply action button** that sends an `apply-polish` message from the background to the active tab.
 - A **content detector** (`utils/contentDetector.ts` + `utils/domWalk.ts`) that, on trigger, collects top-most user-content roots (site-specific or heuristic) and skips UI, nav, ads, buttons, non-`<button>` interactive wrappers, and hidden/screen-reader text. It pierces shadow DOM, so it works with Reddit's `shreddit-*` custom elements.
 - A **shadow-DOM-aware walker** (`utils/domWalk.ts`) for detection, replacement, and visibility filtering.
-- An **LLM transformation engine** (`utils/llmClient.ts` + `utils/polish.ts`): eligible text nodes are batched into a `transform-text` message to the background, which calls Gemini and returns results that are applied back to the same text nodes. Failures, timeouts, and no-API-key degrade gracefully with the original text kept.
+- An **LLM transformation engine** (`utils/llmClient.ts` + `utils/apiClient.ts` + `utils/polish.ts`): eligible text nodes are batched into a `transform-text` message to the background, which calls the configured provider and returns results that are applied back to the same text nodes. Supports **OpenAI-compatible, Anthropic-compatible, and Gemini-compatible** providers (Gemini via the SDK; OpenAI/Anthropic via fetch). Failures, timeouts, and no-config degrade gracefully with the original text kept.
 - A **quality gate** (`utils/quality.ts`): each model reply is scored (Dice token-overlap + length ratio) and rejected when below the configured confidence threshold.
 - A **bounded LRU result cache** (`utils/cache.ts`): polished results are stored per original text in `browser.storage.local` (~1000 entries, 7-day TTL) so re-scrolling or re-encountering text reuses the result instead of re-calling the LLM.
 - A **lazy, viewport-gated pipeline** (`utils/pipeline.ts`): after a click, user-content roots in/near the viewport are batched immediately; the rest are observed with `IntersectionObserver` and processed as the user scrolls near them. A `MutationObserver` picks up content mounted after the click, and work pauses while the user is actively scrolling.
-- An **options page** (`entrypoints/options/`) to set/remove the Gemini API key and the confidence threshold, persisted in `browser.storage.local`.
+- A **provider registry** (`utils/providers.ts`): well-known providers are fetched from a remote index (models.dev, cached ~24h) with a bundled fallback; "Custom Provider" lets you set a name, base URL, and OpenAI/Anthropic/Gemini compatibility. Model dropdowns are populated from the provider (cached live-fetch, index, or bundled suggestions), falling back to a free-text model id.
+- An **options page** (`entrypoints/options/`) to pick provider → model → API key, run a "Test connection" check, and set the confidence threshold; the single config is persisted in `browser.storage.local` (`llm:config`).
 - **Feedback** (`entrypoints/content.ts`): a brief "Polishing…" modal on trigger; rewritten text is wrapped in a highlighted span with the original shown as a tooltip on hover.
 - Per-navigation state kept in `browser.storage.session` to survive Firefox's content-script lifecycle.
 
@@ -87,7 +90,7 @@ Then in Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add
 entrypoints/
   background.ts        Background service worker (message handler, LLM client, action-button forwarding)
   content.ts           Content script (document_idle; applies polish on trigger, modal + highlight feedback)
-  options/             Options page (Gemini API key + confidence threshold)
+  options/             Options page (provider → model → API key, test connection, confidence threshold)
 utils/
   contentDetector.ts   Content detection: site registry, exclusions, content roots
   contentDetector.test.ts
@@ -101,11 +104,17 @@ utils/
   pipeline.test.ts
   cache.ts             Bounded LRU result cache over storage.local (TTL + cap)
   cache.test.ts
-  llmClient.ts         Background Gemini client: batching, timeout, error taxonomy, cache
+  llmClient.ts         Background LLM client: config read, provider dispatch, batching, timeout, taxonomy, cache
   llmClient.test.ts
+  apiClient.ts         OpenAI/Anthropic-compatible fetch clients + response parsing
+  apiClient.test.ts
+  providers.ts         Well-known provider registry (index fetch + cache, bundled fallback, model lists)
+  providers.test.ts
+  optionsModel.ts      Options-page config building/validation (DOM-free, testable)
+  optionsModel.test.ts
   quality.ts           Confidence score + length-fidelity gate for LLM output
   quality.test.ts
-  settings.ts          Shared constants (storage keys, model, batch/timeout, cache, viewport)
+  settings.ts          Shared constants (storage keys, provider index, batch/timeout, cache, viewport)
   live.integration.test.ts  jsdom end-to-end of the full polish flow
 e2e/                   Selenium/Playwright E2E harnesses (Firefox, Chrome, Reddit)
 public/icon/           Toolbar/listing icons (16/32/48/128 PNG)

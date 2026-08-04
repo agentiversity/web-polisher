@@ -157,7 +157,7 @@ export default defineContentScript({
       window.addEventListener('textpolisher:apply', runPolish);
       // WebDriver-only: seed the API key. Reads it from a DOM attribute (which
       // crosses content/page worlds in Firefox), then forwards to the background,
-      // which stores it in the same storage `getApiKey` reads.
+      // which stores it in the same storage `getLlmConfig` reads.
       window.addEventListener('textpolisher:setkey', () => {
         const k = document.documentElement.getAttribute('data-seed-key');
         if (k && navigator.webdriver) {

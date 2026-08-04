@@ -1,31 +1,34 @@
 /**
- * Background-side LLM client (design D1).
+ * Background-side LLM client (design D1, generalized per generalize-llm-provider-model).
  *
- * Content scripts cannot make cross-origin fetches in MV3, so all Gemini API
+ * Content scripts cannot make cross-origin fetches in MV3, so all LLM API
  * traffic runs through the background service worker. This module reads the
- * configured API key from `browser.storage.local`, constructs a small/cheap
- * Gemini client, and exposes a batched `transform()` that rewrites a list of
- * user texts for naturalness while preserving meaning.
+ * single active config (`llm:config`) from `browser.storage.local`, dispatches
+ * to the configured provider — Gemini via the @google/generative-ai SDK,
+ * OpenAI/Anthropic-compatible via raw fetch (`utils/apiClient.ts`) — and
+ * exposes a batched `transform()` that rewrites a list of user texts for
+ * naturalness while preserving meaning.
  *
  * Failure policy (design D6): every path degrades to per-item `ok:false` and
- * never throws uncaught — a missing key, network error, timeout, or rate limit
- * leaves the page text untouched rather than corrupting it.
+ * never throws uncaught — a missing config, network error, timeout, or rate
+ * limit leaves the page text untouched rather than corrupting it.
  */
 
 import { GoogleGenerativeAI, GoogleGenerativeAIFetchError } from '@google/generative-ai';
-import type { GenerativeModel } from '@google/generative-ai';
 import { browser } from 'wxt/browser';
 import {
-  API_KEY_STORAGE_KEY,
-  API_MODEL,
   BATCH_SIZE,
   CONFIDENCE_THRESHOLD_KEY,
   DEFAULT_CONFIDENCE_THRESHOLD,
+  LLM_CONFIG_KEY,
   LLM_TIMEOUT_MS,
   MAX_TEXT_LENGTH,
+  type ApiCompatibility,
+  type LlmConfig,
 } from './settings';
 import { passesQualityGate } from './quality';
 import { getCached, loadCache, saveCache, setCached } from './cache';
+import { ApiHttpError, anthropicChat, openAiChat } from './apiClient';
 
 /** Per-item result of a batch transform. `text` is only meaningful when `ok`. */
 export interface TransformResult {
@@ -50,13 +53,30 @@ const SYSTEM_PROMPT = [
   'Return EXACTLY one rewritten string per input item, in the same order.',
 ].join(' ');
 
-/** Read the configured API key from storage.local; undefined when not set. */
-export async function getApiKey(): Promise<string | undefined> {
-  // Use the bare-key form: Chrome drops keys whose default is `undefined` in the
-  // object form, which would make this always return undefined (no-op).
-  const got = await browser.storage.local.get(API_KEY_STORAGE_KEY);
-  const v = got[API_KEY_STORAGE_KEY];
-  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+/**
+ * Read the single active LLM config from storage.local; undefined when not set
+ * (which means "not configured" — no API call may be made).
+ */
+export async function getLlmConfig(): Promise<LlmConfig | undefined> {
+  try {
+    // Bare-key form: Chrome drops keys whose default is `undefined` in the
+    // object form.
+    const got = await browser.storage.local.get(LLM_CONFIG_KEY);
+    const c = got[LLM_CONFIG_KEY] as Partial<LlmConfig> | undefined;
+    if (c && typeof c === 'object' && typeof c.apiKey === 'string' && c.apiKey.trim() && typeof c.model === 'string' && c.model.trim()) {
+      return {
+        providerId: typeof c.providerId === 'string' ? c.providerId : 'custom',
+        customName: typeof c.customName === 'string' ? c.customName : undefined,
+        baseUrl: typeof c.baseUrl === 'string' ? c.baseUrl : undefined,
+        apiCompatibility: (c.apiCompatibility ?? 'gemini') as ApiCompatibility,
+        model: c.model.trim(),
+        apiKey: c.apiKey.trim(),
+      };
+    }
+  } catch {
+    // Storage unavailable — treat as not configured.
+  }
+  return undefined;
 }
 
 /**
@@ -77,12 +97,6 @@ export async function getConfidenceThreshold(): Promise<number> {
   return DEFAULT_CONFIDENCE_THRESHOLD;
 }
 
-/** Construct a Gemini model client from a raw API key. */
-export function makeClient(apiKey: string): GenerativeModel {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({ model: API_MODEL });
-}
-
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -98,22 +112,68 @@ function buildBatchPrompt(texts: string[]): string {
   );
 }
 
-/** Lenient JSON parser for the model's array reply (raw array, or {results|texts}). */
+/** Find the outermost JSON array in a text reply (Anthropic returns prose/text, not JSON). */
+function extractJsonArray(text: string): unknown | undefined {
+  const start = text.indexOf('[');
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let quote = '';
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === quote) inString = false;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = true;
+      quote = ch;
+      continue;
+    }
+    if (ch === '[' || ch === '{') depth++;
+    else if (ch === ']' || ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return undefined;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function pickStringArray(data: unknown): string[] | undefined {
+  if (Array.isArray(data)) return data.filter((x): x is string => typeof x === 'string');
+  if (data && typeof data === 'object') {
+    const rec = data as Record<string, unknown>;
+    if (Array.isArray(rec.results)) return rec.results.filter((x): x is string => typeof x === 'string');
+    if (Array.isArray(rec.texts)) return rec.texts.filter((x): x is string => typeof x === 'string');
+  }
+  return undefined;
+}
+
+/** Lenient JSON parser for the model's array reply: raw JSON, {results|texts}, or prose-wrapped. */
 function parseResults(raw: string): string[] | undefined {
   try {
-    const data = JSON.parse(raw);
-    if (Array.isArray(data)) return data.filter((x): x is string => typeof x === 'string');
-    if (data && typeof data === 'object') {
-      if (Array.isArray(data.results)) return data.results.filter((x: unknown): x is string => typeof x === 'string');
-      if (Array.isArray(data.texts)) return data.texts.filter((x: unknown): x is string => typeof x === 'string');
-    }
-    return undefined;
+    const parsed = pickStringArray(JSON.parse(raw));
+    if (parsed !== undefined) return parsed;
   } catch {
-    return undefined;
+    // fall through to the prose/array extraction
   }
+  return pickStringArray(extractJsonArray(raw));
 }
 
 function classifyError(err: unknown): string {
+  if (err instanceof ApiHttpError) {
+    return err.status === 429 ? 'rate-limit' : `http-${err.status}`;
+  }
   if (err instanceof GoogleGenerativeAIFetchError && typeof err.status === 'number') {
     if (err.status === 429) return 'rate-limit';
     return `http-${err.status}`;
@@ -122,24 +182,35 @@ function classifyError(err: unknown): string {
   return 'network';
 }
 
-/** Transform one bounded batch through the model; never throws. */
+/** One bounded batch through the configured provider; never throws. */
 async function transformBatch(
-  model: GenerativeModel,
+  config: LlmConfig,
   texts: string[],
   confidenceThreshold: number,
 ): Promise<TransformResult[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
   try {
-    const resp = await model.generateContent(
-      {
-        contents: [{ role: 'user', parts: [{ text: buildBatchPrompt(texts) }] }],
-        systemInstruction: SYSTEM_PROMPT,
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.4 },
-      },
-      { signal: controller.signal },
-    );
-    const parsed = parseResults(resp.response.text());
+    const prompt = buildBatchPrompt(texts);
+    let raw: string;
+    if (config.apiCompatibility === 'gemini') {
+      const genAI = new GoogleGenerativeAI(config.apiKey);
+      const model = genAI.getGenerativeModel({ model: config.model });
+      const resp = await model.generateContent(
+        {
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          systemInstruction: SYSTEM_PROMPT,
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.4 },
+        },
+        { signal: controller.signal },
+      );
+      raw = resp.response.text();
+    } else if (config.apiCompatibility === 'anthropic') {
+      raw = await anthropicChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal, SYSTEM_PROMPT);
+    } else {
+      raw = await openAiChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal, SYSTEM_PROMPT);
+    }
+    const parsed = parseResults(raw);
     return texts.map((original, i) => {
       const candidate = parsed?.[i];
       if (candidate === undefined || candidate === null) {
@@ -166,11 +237,11 @@ async function transformBatch(
 }
 
 /**
- * Transform a list of texts via the configured Gemini client.
+ * Transform a list of texts via the configured provider.
  *
  * Bounded batches are processed sequentially (design D2/D6) to stay inside rate
  * limits and keep latency sane. Returns a parallel array of per-item results the
- * same length as `texts`. When no API key is configured this short-circuits with
+ * same length as `texts`. When no config is present this short-circuits with
  * `ok:false, error:'not-configured'` for every item and makes no HTTP call.
  *
  * A result cache (design D3) is consulted per original text: hits return without
@@ -178,18 +249,16 @@ async function transformBatch(
  * the quality gate are cached). Cache failures never break the transform.
  */
 export async function transform(texts: string[]): Promise<TransformResult[]> {
-  let apiKey: string | undefined;
+  let config: LlmConfig | undefined;
   try {
-    apiKey = await getApiKey();
+    config = await getLlmConfig();
   } catch {
-    // If the key can't be read, assume none is configured — never call the API.
-    apiKey = undefined;
+    config = undefined;
   }
-  if (!apiKey) {
+  if (!config) {
     return texts.map(() => ({ ok: false, text: '', error: 'not-configured' }));
   }
   const confidenceThreshold = await getConfidenceThreshold();
-  const model = makeClient(apiKey);
   const cache = await loadCache();
   const results: TransformResult[] = [];
   for (const batch of chunk(texts, BATCH_SIZE)) {
@@ -208,7 +277,7 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
       }
     });
     if (missTexts.length > 0) {
-      const missResults = await transformBatch(model, missTexts, confidenceThreshold);
+      const missResults = await transformBatch(config, missTexts, confidenceThreshold);
       missResults.forEach((r, k) => {
         const idx = missIndexes[k]!;
         batchResults[idx] = r;
@@ -219,4 +288,34 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
   }
   await saveCache(cache);
   return results;
+}
+
+/**
+ * Validate a candidate config with a minimal chat completion ("Reply with
+ * exactly: ok"). Used by the options-page "Test connection" button; never
+ * persists anything. Returns a normalized failure reason on error.
+ */
+export async function testConnection(config: LlmConfig): Promise<{ ok: boolean; reason?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const prompt = 'Reply with exactly: ok';
+    if (config.apiCompatibility === 'gemini') {
+      const genAI = new GoogleGenerativeAI(config.apiKey);
+      const model = genAI.getGenerativeModel({ model: config.model });
+      await model.generateContent(
+        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        { signal: controller.signal },
+      );
+    } else if (config.apiCompatibility === 'anthropic') {
+      await anthropicChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal);
+    } else {
+      await openAiChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal);
+    }
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: classifyError(err) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
