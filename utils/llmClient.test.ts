@@ -138,6 +138,68 @@ describe('llmClient.transform (batch)', () => {
       { ok: false, text: '', error: 'not-configured' },
     ]);
   });
+
+  it('filters out non-string items from data.texts array', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' });
+    mockModel();
+    mocks.generateContent.mockResolvedValue({
+      response: { text: () => JSON.stringify({ texts: ['polished', null, 123, 'also polished'] }) },
+    });
+    const results = await transform(['text one', 'text two', 'text three', 'text four']);
+    // parseResults filters null/123 → returns ['polished', 'also polished'] (2 items)
+    // transformBatch maps each input to parsed[i], so:
+    //   input[0] → parsed[0] = 'polished' (ok)
+    //   input[1] → parsed[1] = 'also polished' (ok)
+    //   input[2] → parsed[2] = undefined → internal error
+    //   input[3] → parsed[3] = undefined → internal error
+    expect(results).toHaveLength(4);
+    expect(results[0]).toEqual({ ok: true, text: 'polished' });
+    expect(results[1]).toEqual({ ok: true, text: 'also polished' });
+    expect(results[2]).toEqual({ ok: false, text: '', error: 'internal' });
+    expect(results[3]).toEqual({ ok: false, text: '', error: 'internal' });
+  });
+
+  it('degrades with http-500 on a non-429 HTTP error', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' });
+    mockModel();
+    mocks.generateContent.mockRejectedValue(new mocks.FetchError('server error', 500));
+    const results = await transform(['a b c']);
+    expect(results[0]).toEqual({ ok: false, text: '', error: 'http-500' });
+  });
+
+  it('degrades with internal when model returns null for a candidate', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' });
+    mockModel();
+    mocks.generateContent.mockResolvedValue({
+      response: { text: () => JSON.stringify({ results: [null] }) },
+    });
+    const results = await transform(['a b c']);
+    expect(results[0]).toEqual({ ok: false, text: '', error: 'internal' });
+  });
+
+  it('keeps the original when model returns an empty string after trim', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' });
+    mockModel();
+    mocks.generateContent.mockResolvedValue({
+      response: { text: () => JSON.stringify({ results: ['   '] }) },
+    });
+    const results = await transform(['a b c']);
+    // Empty trimmed → internal error (not ok)
+    expect(results[0]).toEqual({ ok: false, text: '', error: 'internal' });
+  });
+
+  it('parses raw array response (no wrapping object)', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' });
+    mockModel();
+    mocks.generateContent.mockResolvedValue({
+      response: { text: () => JSON.stringify(['polished one', 'polished two']) },
+    });
+    const results = await transform(['text one', 'text two']);
+    expect(results.map((r) => [r.ok, r.text])).toEqual([
+      [true, 'polished one'],
+      [true, 'polished two'],
+    ]);
+  });
 });
 
 describe('getApiKey', () => {

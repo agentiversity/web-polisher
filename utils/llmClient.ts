@@ -80,10 +80,10 @@ function buildBatchPrompt(texts: string[]): string {
 function parseResults(raw: string): string[] | undefined {
   try {
     const data = JSON.parse(raw);
-    if (Array.isArray(data)) return data.map(String);
+    if (Array.isArray(data)) return data.filter((x): x is string => typeof x === 'string');
     if (data && typeof data === 'object') {
-      if (Array.isArray(data.results)) return data.results.map(String);
-      if (Array.isArray(data.texts)) return data.texts.map(String);
+      if (Array.isArray(data.results)) return data.results.filter((x): x is string => typeof x === 'string');
+      if (Array.isArray(data.texts)) return data.texts.filter((x): x is string => typeof x === 'string');
     }
     return undefined;
   } catch {

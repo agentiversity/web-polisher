@@ -35,6 +35,11 @@ form.addEventListener('submit', async (event) => {
     setStatus('Enter a key before saving.', 'err');
     return;
   }
+  // Gemini API keys start with "AI" and are typically 39+ characters.
+  if (!/^AIza[A-Za-z0-9_-]{20,}$/.test(raw)) {
+    setStatus("That doesn't look like a Gemini API key (expected AIza...).", 'err');
+    return;
+  }
   try {
     await browser.storage.local.set({ [API_KEY_STORAGE_KEY]: raw });
     setStatus('Key saved.', 'ok');

@@ -26,6 +26,7 @@
   "devDependencies": {
     "@types/firefox-webext-browser": "^143.0.0",
     "@types/jsdom": "^28.0.3",
+    "geckodriver": "^6.1.1",
     "jsdom": "^24.1.0",
     "playwright": "^1.62.1",
     "selenium-webdriver": "^4.46.0",

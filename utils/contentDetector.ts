@@ -13,7 +13,7 @@
  * in `utils/textReplacer.ts` keeps its own basic guard as a secondary safety net.
  */
 
-import { containsIncludingShadow, walkElementsIncludingShadow, isVisible } from './domWalk';
+import { containsIncludingShadow, closestIncludingShadow, walkElementsIncludingShadow, isVisible } from './domWalk';
 
 export interface SiteProfile {
   /** Base domains this profile applies to (e.g. 'reddit.com' matches www/old/new). */
@@ -162,9 +162,9 @@ export function isExcluded(el: Element, profile?: SiteProfile): boolean {
     if (profile && matchesAny(node, profile.excludeSelectors)) return true;
     node = node.parentElement;
   }
-  // Ad / sponsored / complementary regions anywhere up the tree.
+  // Ad / sponsored / complementary regions anywhere up the tree (shadow-aware).
   if (
-    el.closest('aside, [class*="advert"], [class*="sponsor"], [data-nosnippet], [role="complementary"]')
+    closestIncludingShadow(el, 'aside, [class*="advert"], [class*="sponsor"], [data-nosnippet], [role="complementary"]')
   ) {
     return true;
   }
