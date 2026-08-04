@@ -4,6 +4,12 @@ node_modules/
 # pi local configuration (credentials, tooling, skills) — machine-local, not shared
 .pi/
 
+# Local agent/tooling config (commands, skills, caches, credentials) — machine-local, not shared
+.omp/
+.opencode/
+.serena/
+piolium/
+
 # Planning research cache (regenerated)
 docs/research/.cache/
 
