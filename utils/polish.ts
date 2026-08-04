@@ -115,6 +115,7 @@ export async function polishContent(hostname: string): Promise<PolishResult> {
   const texts = nodes.map((n) => n.textContent ?? '');
 
   let reply: TransformTextReply | undefined;
+  let sendMessageFailed = false;
   try {
     const res = await browser.runtime.sendMessage({
       type: 'transform-text',
@@ -124,11 +125,15 @@ export async function polishContent(hostname: string): Promise<PolishResult> {
       reply = res as TransformTextReply;
     }
   } catch {
-    reply = undefined;
+    sendMessageFailed = true;
   }
 
-  if (!reply || reply.notConfigured || !Array.isArray(reply.results)) {
-    return { requested: texts.length, applied: 0, blocks: roots.length, notConfigured: !reply || reply.notConfigured };
+  if (sendMessageFailed || !reply || !Array.isArray(reply.results)) {
+    return { requested: texts.length, applied: 0, blocks: roots.length, notConfigured: false };
+  }
+
+  if (reply.notConfigured) {
+    return { requested: texts.length, applied: 0, blocks: roots.length, notConfigured: true };
   }
 
   let applied = 0;

@@ -11,7 +11,7 @@
  * an in-DOM attribute to prevent duplicate replacement.
  */
 
-import { walkTextNodesIncludingShadow, isVisible } from './domWalk';
+import { walkTextNodesIncludingShadow, closestIncludingShadow, isVisible } from './domWalk';
 
 /** In-DOM marker used to skip already-processed containers (Pitfall #10). */
 export const PROCESSED_ATTR = 'data-text-polished';
@@ -123,7 +123,8 @@ export function isUiElement(el: Element): boolean {
   // NOTE: no bare [aria-label] here — Reddit stamps aria-labels on content
   // containers, so a blanket aria-label rule would reject real post/comment text.
   if (
-    el.closest(
+    closestIncludingShadow(
+      el,
       'button, [role="button"], a, input, textarea, select, label, form, ' +
         'nav, header, footer, aside, [role="navigation"], [role="banner"]',
     )

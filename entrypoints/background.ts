@@ -1,7 +1,7 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { browser } from 'wxt/browser';
 import { transform, getApiKey } from '../utils/llmClient';
-import { API_KEY_STORAGE_KEY } from '../utils/settings';
+import { API_KEY_STORAGE_KEY, MAX_TEXT_LENGTH } from '../utils/settings';
 
 /**
  * Text Polisher background service worker (design D4).
@@ -73,7 +73,7 @@ export default defineBackground(() => {
         (message as TransformTextMessage).type === 'transform-text' &&
         Array.isArray((message as TransformTextMessage).texts)
       ) {
-        const texts = (message as TransformTextMessage).texts.slice(0, 2000);
+        const texts = (message as TransformTextMessage).texts.slice(0, MAX_TEXT_LENGTH);
         const notConfiguredPromise = getApiKey().then((k) => k === undefined);
         void (async () => {
           try {

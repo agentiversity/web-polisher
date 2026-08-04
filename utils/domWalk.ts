@@ -33,24 +33,55 @@ export function containsIncludingShadow(ancestor: Node, el: Node): boolean {
   return false;
 }
 
+/**
+ * Like `el.closest(selector)`, but also traverses shadow DOM boundaries: when
+ * the walk reaches a shadow root it hops to its host element and keeps climbing,
+ * so a match on a shadow-host ancestor is found from inside its shadow tree.
+ */
+export function closestIncludingShadow(el: Element, selectors: string): Element | null {
+  let node: Element | null = el;
+  let guard = 0;
+  while (node && guard++ < 80) {
+    if (node.matches(selectors)) return node;
+    if (node.parentElement) {
+      node = node.parentElement;
+    } else {
+      const root = node.getRootNode();
+      node = root instanceof ShadowRoot ? root.host : null;
+    }
+  }
+  return null;
+}
+
 /** Collect every shadow root reachable from `root`, piercing nested shadow trees. */
 export function collectShadowRoots(root: ParentNode): ShadowRoot[] {
   const found: ShadowRoot[] = [];
+  const visited = new Set<ShadowRoot>();
+  collectShadowRootsImpl(root, found, visited);
+  return found;
+}
+
+function collectShadowRootsImpl(
+  root: ParentNode,
+  found: ShadowRoot[],
+  visited: Set<ShadowRoot>,
+): void {
   // The root itself may be a shadow host whose shadowRoot holds the visible text.
-  if (root instanceof Element && root.shadowRoot) {
+  if (root instanceof Element && root.shadowRoot && !visited.has(root.shadowRoot)) {
+    visited.add(root.shadowRoot);
     found.push(root.shadowRoot);
-    found.push(...collectShadowRoots(root.shadowRoot));
+    collectShadowRootsImpl(root.shadowRoot, found, visited);
   }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
   let node: Node | null;
   while ((node = walker.nextNode())) {
     const el = node as Element;
-    if (el.shadowRoot) {
+    if (el.shadowRoot && !visited.has(el.shadowRoot)) {
+      visited.add(el.shadowRoot);
       found.push(el.shadowRoot);
-      found.push(...collectShadowRoots(el.shadowRoot));
+      collectShadowRootsImpl(el.shadowRoot, found, visited);
     }
   }
-  return found;
 }
 
 /** Yield every text node in `root`'s light tree plus all reachable shadow roots. */
@@ -82,7 +113,8 @@ export function* walkElementsIncludingShadow(root: ParentNode): Generator<Elemen
  */
 export function isVisible(el: Element): boolean {
   if (
-    el.closest(
+    closestIncludingShadow(
+      el,
       '[aria-hidden="true"], [hidden], .sr-only, .screen-reader, .visually-hidden, faceplate-screen-reader-content',
     )
   ) {

@@ -1,0 +1,82 @@
+{
+	"audits": [
+		{
+			"audit_id": "2026-08-04T03:00:59.533Z",
+			"mode": "deep",
+			"started_at": "2026-08-04T03:00:59.533Z",
+			"completed_at": "2026-08-04T03:03:39.887Z",
+			"status": "failed",
+			"phases": {
+				"P1": {
+					"status": "in_progress",
+					"attempt": 5,
+					"max_attempts": 6,
+					"started_at": "2026-08-04T03:00:59.589Z",
+					"heartbeat_at": "2026-08-04T03:09:02.420Z",
+					"last_event_at": "2026-08-04T03:09:02.420Z",
+					"run_id": "p1-2026-08-04T03-00-59-533Z-a5-2f181a36",
+					"error": "Attempt 5/6 failed: No API key found for deepinfra.\n\nUse /login to log into a provider via OAuth or API key. See:\n  C:\\Users\\mpeak\\AppData\\Local\\pnpm\\store\\v11\\links\\@earendil-works\\pi-coding-agent\\0.83.0\\4c113cf9ed6b9f791b4b5b15eb30e832220f1ef1fb0d1d5962d2f28d508abfe4\\node_modules\\@earendil-works\\pi-coding-agent\\docs\\providers.md\n  C:\\Users\\mpeak\\AppData\\Local\\pnpm\\store\\v11\\links\\@earendil-works\\pi-coding-agent\\0.83.0\\4c113cf9ed6b9f791b4b5b15eb30e832220f1ef1fb0d1d5962d2f28d508abfe4\\node_modules\\@earendil-works\\pi-coding-agent\\docs\\models.md. Retrying at 2026-08-04T03:10:22.460Z.",
+					"artifacts": [
+						"C:\\Users\\mpeak\\dev\\my-polisher-extension\\piolium\\tmp\\piolium\\runs\\p1-2026-08-04T03-00-59-533Z-a5-2f181a36\\transcript.jsonl"
+					],
+					"last_error": "No API key found for deepinfra.\n\nUse /login to log into a provider via OAuth or API key. See:\n  C:\\Users\\mpeak\\AppData\\Local\\pnpm\\store\\v11\\links\\@earendil-works\\pi-coding-agent\\0.83.0\\4c113cf9ed6b9f791b4b5b15eb30e832220f1ef1fb0d1d5962d2f28d508abfe4\\node_modules\\@earendil-works\\pi-coding-agent\\docs\\providers.md\n  C:\\Users\\mpeak\\AppData\\Local\\pnpm\\store\\v11\\links\\@earendil-works\\pi-coding-agent\\0.83.0\\4c113cf9ed6b9f791b4b5b15eb30e832220f1ef1fb0d1d5962d2f28d508abfe4\\node_modules\\@earendil-works\\pi-coding-agent\\docs\\models.md",
+					"retry_backoff_ms": 80000,
+					"next_retry_at": "2026-08-04T03:10:22.460Z"
+				},
+				"P2": {
+					"status": "pending"
+				},
+				"P3": {
+					"status": "pending"
+				},
+				"P4": {
+					"status": "pending"
+				},
+				"P5": {
+					"status": "pending"
+				},
+				"P6": {
+					"status": "pending"
+				},
+				"P7": {
+					"status": "pending"
+				},
+				"P8": {
+					"status": "pending"
+				},
+				"P9": {
+					"status": "pending"
+				},
+				"P10": {
+					"status": "pending"
+				},
+				"P11": {
+					"status": "pending"
+				},
+				"P12": {
+					"status": "pending"
+				},
+				"P13": {
+					"status": "pending"
+				},
+				"P14": {
+					"status": "pending"
+				},
+				"P15": {
+					"status": "pending"
+				},
+				"P16": {
+					"status": "pending"
+				},
+				"P17": {
+					"status": "pending"
+				}
+			},
+			"agent_sdk": "pi",
+			"commit": "2b6e57918a35a654d6e25ea4f26a2a2e259aaab6",
+			"branch": "master",
+			"repository": "agentiversity/web-polisher",
+			"history_available": true
+		}
+	]
+}

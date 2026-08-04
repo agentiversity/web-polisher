@@ -1,5 +1,5 @@
 ## Purpose
-Transform user-generated English text for naturalness and fluency (not just grammar and spelling correction) using small, cost-effective LLMs via an API, operating entirely passively with no user interaction.
+Transform user-generated English text for naturalness and fluency (not just grammar and spelling correction) using small, cost-effective LLMs via an API, on demand after the user triggers polishing.
 ## Requirements
 ### Requirement: Transform for naturalness
 The extension SHALL transform text for naturalness and fluency, going beyond grammar and spelling correction.

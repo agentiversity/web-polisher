@@ -151,6 +151,58 @@ describe('polishContent', () => {
   });
 });
 
+describe('edge cases', () => {
+  it('handles sendMessage throwing an error gracefully', async () => {
+    setupArticles();
+    mocks.sendMessage.mockRejectedValue(new Error('context invalidated'));
+
+    const result = await polishContent('example.com');
+    // Should degrade gracefully — no crash, no applied rewrites.
+    expect(result.applied).toBe(0);
+    expect(result.notConfigured).toBe(false);
+    expect(document.body.textContent).toContain('this is a user comment');
+  });
+
+  it('skips detached nodes (node.isConnected === false) in results', async () => {
+    setupArticles();
+    const firstP = document.querySelector('article p') as HTMLParagraphElement;
+
+    mocks.sendMessage.mockImplementation(async () => {
+      // Simulate the node being removed from DOM while awaiting the API response.
+      firstP.remove();
+      return replyFor([{ ok: true, text: 'SHOULD NOT APPLY' }]);
+    });
+
+    const result = await polishContent('example.com');
+    expect(result.applied).toBe(0);
+    // Original text is gone (element removed), but the rewrite was not applied.
+    expect(document.body.textContent).not.toContain('SHOULD NOT APPLY');
+  });
+
+  it('skips results when reply.results is shorter than nodes array', async () => {
+    setupArticles();
+    // Return fewer results than nodes — should not crash.
+    mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'ONLY ONE' }]));
+
+    const result = await polishContent('example.com');
+    // 2 nodes collected but only 1 result — should apply at most 1.
+    expect(result.applied).toBeLessThanOrEqual(1);
+  });
+
+  it('handles null result items gracefully', async () => {
+    setupArticles();
+    mocks.sendMessage.mockResolvedValue({
+      type: 'transform-text-result',
+      results: [null as unknown as { ok: boolean; text: string }, { ok: true, text: 'VALID' }],
+      notConfigured: false,
+    });
+
+    const result = await polishContent('example.com');
+    // null result should be skipped, valid result applied if meaningfully changed.
+    expect(result.applied).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('MIN_TEXT_LENGTH default', () => {
   it('is a sane positive default used by collection', () => {
     expect(MIN_TEXT_LENGTH).toBeGreaterThan(0);

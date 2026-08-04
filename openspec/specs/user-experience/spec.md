@@ -1,14 +1,18 @@
 ## Purpose
-Operate invisibly and silently, transforming text with no user awareness or interaction, so reading feels natural without the user noticing any intervention.
+Provide clear visual feedback once, after the user triggers polishing, so it is obvious the extension is working — then remain quiet while text updates. The initial indicator (brief spinner/highlight) is intentional and fades quickly; the blue highlights with tooltip originals let the user see and compare what changed.
 
 ## Requirements
 
-### Requirement: Operate invisibly
-The extension SHALL operate invisibly once the user has triggered polishing, with no awareness that transformation is occurring.
+### Requirement: Operate with minimal disruption
+The extension SHALL provide clear initial feedback that polishing is in progress, then leave the user undisturbed while individual text updates are applied.
 
-#### Scenario: Seamless reading after trigger
-- **WHEN** the user has triggered polishing and then reads a page containing user-generated content
-- **THEN** polished text appears seamlessly and the user is not made aware of further per-item intervention
+#### Scenario: Brief indicator on trigger
+- **WHEN** the user has triggered polishing
+- **THEN** a brief loading indicator appears, and polished text is highlighted with the original available on hover so the user can see what changed
+
+#### Scenario: No repeated interruptions after trigger
+- **WHEN** the extension is applying polishing results
+- **THEN** no further popups, dialogs, or per-item confirmations are shown
 
 ### Requirement: Require explicit trigger before transformation
 The extension SHALL NOT transform page content until the user explicitly triggers it via the action button.
