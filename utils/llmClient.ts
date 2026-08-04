@@ -25,6 +25,7 @@ import {
   MAX_TEXT_LENGTH,
 } from './settings';
 import { passesQualityGate } from './quality';
+import { getCached, loadCache, saveCache, setCached } from './cache';
 
 /** Per-item result of a batch transform. `text` is only meaningful when `ok`. */
 export interface TransformResult {
@@ -171,6 +172,10 @@ async function transformBatch(
  * limits and keep latency sane. Returns a parallel array of per-item results the
  * same length as `texts`. When no API key is configured this short-circuits with
  * `ok:false, error:'not-configured'` for every item and makes no HTTP call.
+ *
+ * A result cache (design D3) is consulted per original text: hits return without
+ * an API call, misses are transformed and written back (only results that pass
+ * the quality gate are cached). Cache failures never break the transform.
  */
 export async function transform(texts: string[]): Promise<TransformResult[]> {
   let apiKey: string | undefined;
@@ -185,11 +190,33 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
   }
   const confidenceThreshold = await getConfidenceThreshold();
   const model = makeClient(apiKey);
+  const cache = await loadCache();
   const results: TransformResult[] = [];
   for (const batch of chunk(texts, BATCH_SIZE)) {
     // Drop oversize items from a batch silently (defensive cost guard).
     const bounded = batch.map((t) => (t.length > MAX_TEXT_LENGTH ? t.slice(0, MAX_TEXT_LENGTH) : t));
-    results.push(...(await transformBatch(model, bounded, confidenceThreshold)));
+    const batchResults: TransformResult[] = [];
+    const missIndexes: number[] = [];
+    const missTexts: string[] = [];
+    bounded.forEach((t, i) => {
+      const hit = getCached(cache, t);
+      if (hit !== undefined) {
+        batchResults[i] = { ok: true, text: hit };
+      } else {
+        missIndexes.push(i);
+        missTexts.push(t);
+      }
+    });
+    if (missTexts.length > 0) {
+      const missResults = await transformBatch(model, missTexts, confidenceThreshold);
+      missResults.forEach((r, k) => {
+        const idx = missIndexes[k]!;
+        batchResults[idx] = r;
+        if (r.ok && r.text) setCached(cache, missTexts[k]!, r.text);
+      });
+    }
+    results.push(...batchResults);
   }
+  await saveCache(cache);
   return results;
 }

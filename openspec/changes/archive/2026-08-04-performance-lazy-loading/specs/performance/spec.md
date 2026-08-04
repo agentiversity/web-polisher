@@ -1,6 +1,5 @@
-## Purpose
-Lazy-load text transformations so pages remain fast and responsive, processing user content only as it approaches the viewport and gracefully handling the 1-2 second LLM latency without perceived sluggishness.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Lazy-load transformations
 After the user triggers polishing, the extension SHALL transform user-generated content as it approaches or enters the viewport, starting with content currently in or near view.
 
@@ -38,6 +37,8 @@ The extension SHALL prevent page slowdown caused by heavy transformation activit
 - **WHEN** the same text is encountered more than once (re-scroll or re-add)
 - **THEN** the extension reuses the previously polished result from a bounded, time-limited cache or skips already-processed content rather than re-transforming it
 
+## ADDED Requirements
+
 ### Requirement: Transform dynamically mounted content
 After the user triggers polishing, the extension SHALL transform user-generated content that is mounted after the trigger (e.g. infinite scroll, virtualization) once it approaches or enters the viewport.
 
@@ -48,4 +49,3 @@ After the user triggers polishing, the extension SHALL transform user-generated 
 #### Scenario: Virtualized content transformed once
 - **WHEN** content is removed from and re-added to the DOM (virtualized feed scrolling)
 - **THEN** the extension transforms it at most once per polished state and reuses the cached result rather than re-calling the LLM
-

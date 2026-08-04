@@ -32,3 +32,18 @@ export const CONFIDENCE_THRESHOLD_KEY = 'confidence:threshold';
 
 /** Default confidence threshold: conservative, admits word-preserving rewrites. */
 export const DEFAULT_CONFIDENCE_THRESHOLD = 50;
+
+/** Storage key for the polished-result cache (one object, storage.local). */
+export const CACHE_KEY = 'cache:polish:v1';
+
+/** Cache entry lifetime before a stored rewrite is re-requested. */
+export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/** Max cached entries; LRU-pruned past this cap. */
+export const CACHE_MAX_ENTRIES = 1000;
+
+/** How far past the viewport edge content is pre-fetched (performance, D1). */
+export const VIEWPORT_MARGIN_PX = 200;
+
+/** Quiet window after the last scroll during which DOM writes are deferred. */
+export const SCROLL_PAUSE_MS = 200;

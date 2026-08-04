@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { polishContent, collectEligibleTextNodes, isMeaningfullyChanged } from './polish';
-import { PROCESSED_ATTR } from './textReplacer';
+import { polishContent, polishRoot, collectEligibleTextNodes, isMeaningfullyChanged } from './polish';
+import { PROCESSED_ATTR, markProcessed } from './textReplacer';
 import { MIN_TEXT_LENGTH } from './settings';
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -57,11 +57,13 @@ describe('collectEligibleTextNodes', () => {
 describe('polishContent', () => {
   it('applies successful results back to the same text nodes and marks roots', async () => {
     setupArticles();
-    mocks.sendMessage.mockResolvedValue(
-      replyFor([
-        { ok: true, text: 'POLISHED ONE' },
-        { ok: true, text: 'POLISHED TWO' },
-      ]),
+    mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) =>
+      replyFor(
+        msg.texts.map((t) => ({
+          ok: true,
+          text: t.startsWith('this is a user comment') ? 'POLISHED ONE' : 'POLISHED TWO',
+        })),
+      ),
     );
 
     const result = await polishContent('example.com');
@@ -127,11 +129,9 @@ describe('polishContent', () => {
 
   it('keeps the original when a result equals the existing text (no improvement)', async () => {
     setupArticles();
-    mocks.sendMessage.mockResolvedValue(
-      replyFor([
-        { ok: true, text: 'this is a user comment that is long enough to transform' },
-        { ok: true, text: 'another comment body that should also be handled fine here' },
-      ]),
+    // Model returns every item verbatim — no rewrite worth applying.
+    mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) =>
+      replyFor(msg.texts.map((t) => ({ ok: true, text: t }))),
     );
     const result = await polishContent('example.com');
     // No textual change, so not counted as applied (and nothing to write).
@@ -151,6 +151,39 @@ describe('polishContent', () => {
   });
 });
 
+describe('polishRoot (per-root path)', () => {
+  it('polishes a single root and marks only it processed', async () => {
+    setupArticles();
+    mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'POLISHED ONE' }]));
+
+    const root = document.querySelector('article') as HTMLElement;
+    const r = await polishRoot(root, 'example.com');
+    expect(r).toEqual({ requested: 1, applied: 1, notConfigured: false });
+    expect(root.hasAttribute(PROCESSED_ATTR)).toBe(true);
+    expect(document.querySelectorAll('article')[1]!.hasAttribute(PROCESSED_ATTR)).toBe(false);
+  });
+
+  it('is a no-op for a root already processed', async () => {
+    setupArticles();
+    const root = document.querySelector('article') as HTMLElement;
+    markProcessed(root);
+
+    const r = await polishRoot(root, 'example.com');
+    expect(r).toEqual({ requested: 0, applied: 0, notConfigured: false });
+    expect(mocks.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns notConfigured and leaves the root unmarked when no key is set', async () => {
+    setupArticles();
+    mocks.sendMessage.mockResolvedValue(replyFor([], true));
+
+    const root = document.querySelector('article') as HTMLElement;
+    const r = await polishRoot(root, 'example.com');
+    expect(r).toEqual({ requested: 1, applied: 0, notConfigured: true });
+    expect(root.hasAttribute(PROCESSED_ATTR)).toBe(false);
+  });
+});
+
 describe('edge cases', () => {
   it('handles sendMessage throwing an error gracefully', async () => {
     setupArticles();
@@ -167,26 +200,35 @@ describe('edge cases', () => {
     setupArticles();
     const firstP = document.querySelector('article p') as HTMLParagraphElement;
 
-    mocks.sendMessage.mockImplementation(async () => {
-      // Simulate the node being removed from DOM while awaiting the API response.
-      firstP.remove();
-      return replyFor([{ ok: true, text: 'SHOULD NOT APPLY' }]);
+    mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) => {
+      // Detach the first article's node while awaiting the response; the second
+      // article's text transforms normally.
+      if (msg.texts.some((t) => t.includes('this is a user comment'))) firstP.remove();
+      return replyFor(
+        msg.texts.map((t) => ({
+          ok: true,
+          text: t.includes('this is a user comment') ? 'SHOULD NOT APPLY' : 'SECOND APPLIED',
+        })),
+      );
     });
 
     const result = await polishContent('example.com');
-    expect(result.applied).toBe(0);
-    // Original text is gone (element removed), but the rewrite was not applied.
+    // Detached node's rewrite is not applied; the other root still is.
+    expect(result.applied).toBe(1);
     expect(document.body.textContent).not.toContain('SHOULD NOT APPLY');
+    expect(document.body.textContent).toContain('SECOND APPLIED');
   });
 
-  it('skips results when reply.results is shorter than nodes array', async () => {
-    setupArticles();
-    // Return fewer results than nodes — should not crash.
+  it('applies at most the number of results returned', async () => {
+    document.body.innerHTML =
+      '<article><p>first comment text that is long enough to transform</p>' +
+      '<p>second comment text that is also long enough to transform</p></article>';
+    // One result for two nodes — the second node is skipped, nothing crashes.
     mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'ONLY ONE' }]));
 
     const result = await polishContent('example.com');
-    // 2 nodes collected but only 1 result — should apply at most 1.
-    expect(result.applied).toBeLessThanOrEqual(1);
+    expect(result.applied).toBe(1);
+    expect(document.body.textContent).toContain('ONLY ONE');
   });
 
   it('handles null result items gracefully', async () => {

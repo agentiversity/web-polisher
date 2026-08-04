@@ -39,7 +39,16 @@ export interface PolishResult {
   applied: number;
   /** Number of detected content roots. */
   blocks: number;
+  /** Number of content roots still waiting to be processed (Phase 4 lazy). */
+  pending: number;
   /** True when the request was a no-op because no API key is configured. */
+  notConfigured: boolean;
+}
+
+/** Per-root result of a single `polishRoot` pass. */
+export interface PolishRootResult {
+  requested: number;
+  applied: number;
   notConfigured: boolean;
 }
 
@@ -68,7 +77,7 @@ export function collectEligibleTextNodes(
   return nodes;
 }
 
-const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, notConfigured: false };
+const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false };
 
 /**
  * Normalize for a visible-text comparison: collapse whitespace, lowercase,
@@ -91,28 +100,49 @@ export function isMeaningfullyChanged(original: string, polished: string): boole
   return normalizeForCompare(original) !== normalizeForCompare(polished);
 }
 
+/** Apply one transform result to a single collected node; true if rewritten. */
+function applyOne(node: Text, res: TransformResult | undefined): boolean {
+  if (!node || !res || !res.ok || !res.text) return false;
+  // Guard against a node that detached while awaiting the response.
+  if (!node.isConnected) return false;
+  const parent = node.parentElement;
+  if (!parent || parent.hasAttribute(PROCESSED_ATTR)) return false;
+  const original = node.textContent ?? '';
+  // Only highlight/rewrite when the change is one a reader would notice
+  // (never for whitespace- or case-only differences).
+  if (!isMeaningfullyChanged(original, res.text)) return false;
+  // Wrap the rewrite in a highlighted span so the user can see what changed;
+  // the original text is exposed as a native tooltip on hover.
+  const span = document.createElement('span');
+  span.className = 'text-polished';
+  span.title = original;
+  span.textContent = res.text;
+  span.style.setProperty('background-color', '#cfe4f7'); // light blue
+  span.style.setProperty('border-radius', '2px');
+  node.replaceWith(span);
+  return true;
+}
+
 /**
- * Polish every detected user-content block on the page: detect roots →
- * collect eligible text nodes → `transform-text` to background → apply results
- * back to the same nodes. Roots are only marked processed once a real
- * (non-no-op) pass applies at least one rewrite, so a later click with a key can
- * still retry after a full failure.
+ * Polish a set of content roots in one batched request: collect eligible text
+ * nodes across all roots → one `transform-text` message to the background →
+ * apply results back to the same nodes. Roots that got at least one rewrite are
+ * marked processed (idempotency), so a later pass can still retry failures.
  */
-export async function polishContent(hostname: string): Promise<PolishResult> {
-  if (!document.body) return EMPTY;
-
-  const roots = findUserContentRoots(document.body, hostname);
-  if (roots.length === 0) return EMPTY;
-
-  const nodes: Text[] = [];
+export async function polishRoots(roots: Element[], hostname: string): Promise<PolishResult> {
+  const blocks = roots.length;
+  const groups: { root: Element; nodes: Text[] }[] = [];
   for (const root of roots) {
     // Idempotency: skip a root already processed on an earlier pass.
-    if (root instanceof Element && root.hasAttribute(PROCESSED_ATTR)) continue;
-    nodes.push(...collectEligibleTextNodes(root));
+    if (root.hasAttribute(PROCESSED_ATTR)) continue;
+    const nodes = collectEligibleTextNodes(root);
+    if (nodes.length === 0) continue;
+    groups.push({ root, nodes });
   }
-  if (nodes.length === 0) return { ...EMPTY, blocks: roots.length };
+  const requested = groups.reduce((sum, g) => sum + g.nodes.length, 0);
+  if (groups.length === 0) return { requested: 0, applied: 0, blocks, pending: 0, notConfigured: false };
 
-  const texts = nodes.map((n) => n.textContent ?? '');
+  const texts = groups.flatMap((g) => g.nodes.map((n) => n.textContent ?? ''));
 
   let reply: TransformTextReply | undefined;
   let sendMessageFailed = false;
@@ -129,43 +159,54 @@ export async function polishContent(hostname: string): Promise<PolishResult> {
   }
 
   if (sendMessageFailed || !reply || !Array.isArray(reply.results)) {
-    return { requested: texts.length, applied: 0, blocks: roots.length, notConfigured: false };
+    return { requested, applied: 0, blocks, pending: 0, notConfigured: false };
   }
-
   if (reply.notConfigured) {
-    return { requested: texts.length, applied: 0, blocks: roots.length, notConfigured: true };
+    return { requested, applied: 0, blocks, pending: 0, notConfigured: true };
   }
 
   let applied = 0;
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    if (!node) continue;
-    const res = reply.results[i];
-    if (!res || !res.ok || !res.text) continue;
-    // Guard against a node that detached while awaiting the response.
-    if (!node.isConnected) continue;
-    const parent = node.parentElement;
-    if (!parent || parent.hasAttribute(PROCESSED_ATTR)) continue;
-    const original = node.textContent ?? '';
-    // Only highlight/rewrite when the change is one a reader would notice
-    // (never for whitespace- or case-only differences).
-    if (!isMeaningfullyChanged(original, res.text)) continue;
-    // Wrap the rewrite in a highlighted span so the user can see what changed;
-    // the original text is exposed as a native tooltip on hover.
-    const span = document.createElement('span');
-    span.className = 'text-polished';
-    span.title = original;
-    span.textContent = res.text;
-    span.style.setProperty('background-color', '#cfe4f7'); // light blue
-    span.style.setProperty('border-radius', '2px');
-    node.replaceWith(span);
-    applied++;
+  let offset = 0;
+  for (const g of groups) {
+    let groupApplied = 0;
+    let allOk = true;
+    for (let i = 0; i < g.nodes.length; i++) {
+      const res = reply.results[offset + i];
+      if (!res || !res.ok) allOk = false;
+      if (applyOne(g.nodes[i]!, res)) {
+        groupApplied++;
+        applied++;
+      }
+    }
+    offset += g.nodes.length;
+    // Mark processed when something changed OR every node got a usable (ok)
+    // result — a fully-attempted root (including verbatim/no-improvement) is
+    // not worth re-requesting. Only a partial/failed pass stays unmarked so a
+    // later run can retry the failures.
+    if (groupApplied > 0 || allOk) markProcessed(g.root);
   }
+  return { requested, applied, blocks, pending: 0, notConfigured: false };
+}
 
-  // Retain idempotency: mark processed roots so a re-click doesn't re-transform.
-  if (applied > 0) {
-    for (const root of roots) markProcessed(root);
-  }
+/**
+ * Polish a single content root (scroll-driven / per-root path). The root is
+ * marked processed only when at least one rewrite is applied, so a later pass
+ * with a key can still retry after a full failure.
+ */
+export async function polishRoot(root: Element, hostname: string): Promise<PolishRootResult> {
+  const r = await polishRoots([root], hostname);
+  return { requested: r.requested, applied: r.applied, notConfigured: r.notConfigured };
+}
 
-  return { requested: texts.length, applied, blocks: roots.length, notConfigured: false };
+/**
+ * Polish every detected user-content block on the page in one pass (legacy
+ * entry point, used by unit/integration tests; the browser flow uses the lazy
+ * pipeline in `pipeline.ts`). Detects roots → `polishRoots` each batch.
+ */
+export async function polishContent(hostname: string): Promise<PolishResult> {
+  if (!document.body) return EMPTY;
+  const roots = findUserContentRoots(document.body, hostname);
+  if (roots.length === 0) return EMPTY;
+  const r = await polishRoots(roots, hostname);
+  return { ...r, pending: 0 };
 }

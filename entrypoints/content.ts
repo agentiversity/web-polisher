@@ -1,6 +1,6 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { browser } from 'wxt/browser';
-import { polishContent } from '../utils/polish';
+import { startPolish, stopPolish } from '../utils/pipeline';
 
 /**
  * Text Polisher content script.
@@ -87,7 +87,10 @@ export default defineContentScript({
       dbg('reset session state on page lifecycle event');
     };
     window.addEventListener('pageshow', () => void resetSession());
-    window.addEventListener('pagehide', () => dbg('pagehide'));
+    window.addEventListener('pagehide', () => {
+      stopPolish();
+      dbg('pagehide');
+    });
 
     // 4.3: stub message round-trip to background (validates CORS-safe architecture).
     browser.runtime
@@ -108,7 +111,7 @@ export default defineContentScript({
         void (async () => {
           showPolishingModal();
           try {
-            const result = await polishContent(window.location.hostname);
+            const result = await startPolish(window.location.hostname);
             dbg(
               'polish:',
               result.applied,
@@ -116,13 +119,16 @@ export default defineContentScript({
               result.requested,
               'nodes across',
               result.blocks,
-              'blocks; notConfigured =',
+              'blocks; pending =',
+              result.pending,
+              '; notConfigured =',
               result.notConfigured,
             );
             sendResponse({
               ok: true,
               replaced: result.applied,
               blocks: result.blocks,
+              pending: result.pending,
               notConfigured: result.notConfigured,
             });
           } finally {
@@ -141,7 +147,7 @@ export default defineContentScript({
         // Ack via a persistent DOM marker (events may not cross content/page worlds).
         document.documentElement.setAttribute('data-text-polisher-ack', 'true');
         showPolishingModal();
-        void polishContent(window.location.hostname)
+        void startPolish(window.location.hostname)
           .then((result) => {
             document.documentElement.setAttribute('data-text-polisher-done', JSON.stringify({ replaced: result.applied, notConfigured: result.notConfigured }));
           })

@@ -16,7 +16,7 @@ You browse as normal; when you want a page's content polished, you click the too
 
 **Phase 5 — Quality & Confidence: complete.** A deterministic quality gate (token-overlap similarity + length fidelity) rejects low-confidence rewrites before they touch the page; the threshold is tunable in the options page.
 
-**Phase 4 — Performance & Lazy Loading: spec'd but not yet built.**
+**Phase 4 — Performance & Lazy Loading: complete.** After a click, content in/near the viewport is transformed first; off-screen and dynamically mounted content is processed as it scrolls into view, work pauses during scrolling, and a bounded LRU result cache avoids re-transforming the same text.
 
 - ✅ Loads in Firefox without errors
 - ✅ React-safe text replacement (no DOM breakage on Facebook/Reddit)
@@ -27,7 +27,9 @@ You browse as normal; when you want a page's content polished, you click the too
 - ✅ Quality gate: low-confidence rewrites never reach the page
 - ✅ Settings: Gemini API key + confidence threshold via an options page
 - ✅ Feedback: "Polishing…" modal, changed text highlighted with original on hover
-- ⏳ Phase 4 (performance & lazy loading) is spec'd but not yet built
+- ✅ Lazy, viewport-gated processing: in-view content first, rest on scroll
+- ✅ Dynamic-content pickup (infinite scroll / virtualization) after the click
+- ✅ Bounded LRU result cache (storage.local) — no re-transforming the same text
 
 ## Requirements
 
@@ -73,6 +75,8 @@ Then in Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add
 - A **shadow-DOM-aware walker** (`utils/domWalk.ts`) for detection, replacement, and visibility filtering.
 - An **LLM transformation engine** (`utils/llmClient.ts` + `utils/polish.ts`): eligible text nodes are batched into a `transform-text` message to the background, which calls Gemini and returns results that are applied back to the same text nodes. Failures, timeouts, and no-API-key degrade gracefully with the original text kept.
 - A **quality gate** (`utils/quality.ts`): each model reply is scored (Dice token-overlap + length ratio) and rejected when below the configured confidence threshold.
+- A **bounded LRU result cache** (`utils/cache.ts`): polished results are stored per original text in `browser.storage.local` (~1000 entries, 7-day TTL) so re-scrolling or re-encountering text reuses the result instead of re-calling the LLM.
+- A **lazy, viewport-gated pipeline** (`utils/pipeline.ts`): after a click, user-content roots in/near the viewport are batched immediately; the rest are observed with `IntersectionObserver` and processed as the user scrolls near them. A `MutationObserver` picks up content mounted after the click, and work pauses while the user is actively scrolling.
 - An **options page** (`entrypoints/options/`) to set/remove the Gemini API key and the confidence threshold, persisted in `browser.storage.local`.
 - **Feedback** (`entrypoints/content.ts`): a brief "Polishing…" modal on trigger; rewritten text is wrapped in a highlighted span with the original shown as a tooltip on hover.
 - Per-navigation state kept in `browser.storage.session` to survive Firefox's content-script lifecycle.
@@ -91,13 +95,17 @@ utils/
   domWalk.test.ts
   textReplacer.ts      TreeWalker text-node replacement + UI-element exclusion guard
   textReplacer.test.ts
-  polish.ts            Content-side orchestration: detect → collect → transform-text → apply
+  polish.ts            Content-side orchestration: detect → batch → transform-text → apply
   polish.test.ts
-  llmClient.ts         Background Gemini client: batching, timeout, error taxonomy
+  pipeline.ts          Lazy viewport-gated pipeline (IntersectionObserver, MutationObserver, scroll-pause)
+  pipeline.test.ts
+  cache.ts             Bounded LRU result cache over storage.local (TTL + cap)
+  cache.test.ts
+  llmClient.ts         Background Gemini client: batching, timeout, error taxonomy, cache
   llmClient.test.ts
   quality.ts           Confidence score + length-fidelity gate for LLM output
   quality.test.ts
-  settings.ts          Shared constants (storage keys, model, batch/timeout limits)
+  settings.ts          Shared constants (storage keys, model, batch/timeout, cache, viewport)
   live.integration.test.ts  jsdom end-to-end of the full polish flow
 e2e/                   Selenium/Playwright E2E harnesses (Firefox, Chrome, Reddit)
 public/icon/           Toolbar/listing icons (16/32/48/128 PNG)
@@ -132,11 +140,11 @@ wxt.config.ts          WXT build config incl. Firefox MV3 manifest
 | 3 | Settings: API key + confidence threshold (`settings`) | ✅ archived |
 | 3 | User Experience: modal + highlight feedback (`user-experience`) | ✅ archived |
 | 5 | Quality & Confidence (`quality-and-confidence`) | ✅ archived |
-| 4 | Performance & Lazy Loading (`performance`) | ⏳ not started |
+| 4 | Performance & Lazy Loading (`performance`) | ✅ archived |
 
-## Known findings (to address in later phases)
+## Known findings
 
-- **Dynamic content:** Reddit virtualizes its feed, so only posts in the DOM at click time get transformed. Handling infinite scroll / newly-mounted content is **Phase 4**.
+- **Dynamic content:** Reddit virtualizes its feed; off-screen content is now transformed lazily as it scrolls into view, and content mounted after the click is picked up by `MutationObserver`. Very deep threads still cost one LLM batch per scrolled-into-view region.
 
 ## License
 

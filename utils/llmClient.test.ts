@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { transform, getApiKey, getConfidenceThreshold } from './llmClient';
-import { CONFIDENCE_THRESHOLD_KEY } from './settings';
+import { CONFIDENCE_THRESHOLD_KEY, CACHE_KEY } from './settings';
 
 /** Hoisted mocks shared with the vi.mock factories below. */
 const mocks = vi.hoisted(() => {
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
   }
   return {
     storageGet: vi.fn(),
+    storageSet: vi.fn(),
     generateContent: vi.fn(),
     getGenerativeModel: vi.fn(),
     FetchError,
@@ -21,7 +22,14 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('wxt/browser', () => ({
-  browser: { storage: { local: { get: mocks.storageGet } } },
+  browser: {
+    storage: {
+      local: {
+        get: mocks.storageGet,
+        set: mocks.storageSet,
+      },
+    },
+  },
 }));
 
 vi.mock('@google/generative-ai', () => ({
@@ -44,9 +52,11 @@ function mockModel() {
 
 beforeEach(() => {
   mocks.storageGet.mockReset();
+  mocks.storageSet.mockReset();
   mocks.generateContent.mockReset();
   mocks.getGenerativeModel.mockReset();
   mocks.storageGet.mockResolvedValue({});
+  mocks.storageSet.mockResolvedValue(undefined);
 });
 
 describe('llmClient.transform (batch)', () => {
@@ -225,6 +235,59 @@ describe('llmClient.transform (batch)', () => {
       [true, 'polished one'],
       [true, 'polished two'],
     ]);
+  });
+
+  it('serves a cache hit without calling the API', async () => {
+    const now = Date.now();
+    mocks.storageGet.mockResolvedValue({
+      [KEY]: 'ABC123',
+      [CACHE_KEY]: { 'text one': { polished: 'CACHED ONE', ts: now } },
+    });
+    mockModel();
+    const results = await transform(['text one']);
+    expect(results).toEqual([{ ok: true, text: 'CACHED ONE' }]);
+    // No model call: the hit is served straight from the cache.
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  it('calls the API only for cache misses and merges hits', async () => {
+    const now = Date.now();
+    mocks.storageGet.mockResolvedValue({
+      [KEY]: 'ABC123',
+      [CACHE_KEY]: { 'text one': { polished: 'CACHED ONE', ts: now } },
+    });
+    mockModel();
+    // Word-order rewrite: same tokens (Dice 100) and near-identical length, so
+    // it clears the quality gate.
+    resolveResults(['two text']);
+    const results = await transform(['text one', 'text two']);
+    expect(results.map((r) => [r.ok, r.text])).toEqual([
+      [true, 'CACHED ONE'],
+      [true, 'two text'],
+    ]);
+    // Only the miss is sent to the model.
+    expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes back ok results to the cache', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123', [CACHE_KEY]: {} });
+    mockModel();
+    resolveResults(['polished one']);
+    await transform(['text one']);
+    const write = mocks.storageSet.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    const cached = write.find((o) => CACHE_KEY in o)?.[CACHE_KEY] as Record<string, { polished: string }>;
+    expect(cached?.['text one']?.polished).toBe('polished one');
+  });
+
+  it('does not cache a result that fails the quality gate', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123', [CACHE_KEY]: {} });
+    mockModel();
+    resolveResults(['completely unrelated output']);
+    await transform(['a normal sentence here']);
+    const write = mocks.storageSet.mock.calls.map((c) => c[0] as Record<string, unknown>);
+    const cached = write.filter((o) => CACHE_KEY in o).at(-1)?.[CACHE_KEY] as Record<string, unknown>;
+    // saveCache always persists the (pruned) map; it must not contain the rejected text.
+    expect(cached?.['a normal sentence here']).toBeUndefined();
   });
 });
 
