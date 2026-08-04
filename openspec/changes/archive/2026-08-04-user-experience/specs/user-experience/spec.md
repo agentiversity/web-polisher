@@ -1,6 +1,5 @@
-## Purpose
-Provide clear visual feedback once, after the user triggers polishing, so it is obvious the extension is working — then remain quiet while text updates. The initial indicator (brief spinner/highlight) is intentional and fades quickly; the blue highlights with tooltip originals let the user see and compare what changed.
-## Requirements
+## MODIFIED Requirements
+
 ### Requirement: Operate with minimal disruption
 The extension SHALL provide clear initial feedback that polishing is in progress, then leave the user undisturbed while individual text updates are applied.
 
@@ -22,4 +21,3 @@ The extension SHALL NOT transform page content until the user explicitly trigger
 #### Scenario: Silent on failure
 - **WHEN** a triggered transformation fails or is rejected (e.g. offline, low confidence, API error)
 - **THEN** the extension does not surface an error to the user and simply leaves the original text unchanged
-
