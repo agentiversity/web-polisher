@@ -1,5 +1,0 @@
-No API key found for deepinfra.
-
-Use /login to log into a provider via OAuth or API key. See:
-  C:\Users\mpeak\AppData\Local\pnpm\store\v11\links\@earendil-works\pi-coding-agent\0.83.0\4c113cf9ed6b9f791b4b5b15eb30e832220f1ef1fb0d1d5962d2f28d508abfe4\node_modules\@earendil-works\pi-coding-agent\docs\providers.md
-  C:\Users\mpeak\AppData\Local\pnpm\store\v11\links\@earendil-works\pi-coding-agent\0.83.0\4c113cf9ed6b9f791b4b5b15eb30e832220f1ef1fb0d1d5962d2f28d508abfe4\node_modules\@earendil-works\pi-coding-agent\docs\models.md
