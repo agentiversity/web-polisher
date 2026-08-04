@@ -168,6 +168,10 @@ describe('isMeaningfullyChanged', () => {
   it('treats case-only differences as unchanged', () => {
     expect(isMeaningfullyChanged('i am here', 'I am here')).toBe(false);
   });
+  it('treats punctuation-only differences as unchanged (no highlight)', () => {
+    expect(isMeaningfullyChanged('That was a really good movie, I enjoyed it.', 'That was a really good movie; I enjoyed it.')).toBe(false);
+    expect(isMeaningfullyChanged('I like it — really.', 'I like it, really.')).toBe(false);
+  });
   it('flags real rewording as changed', () => {
     expect(isMeaningfullyChanged('I am very agree', 'I completely agree')).toBe(true);
   });

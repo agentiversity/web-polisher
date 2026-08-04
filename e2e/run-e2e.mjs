@@ -51,7 +51,7 @@ const sel = (n) => `article[data-comment="${n}"] p`;
 async function pageState(page) {
   return page.evaluate(() => {
     const comments = [];
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 1; i <= 5; i++) {
       const el = document.querySelector(`article[data-comment="${i}"] p`);
       comments.push(el ? el.textContent.trim() : null);
     }
@@ -110,11 +110,26 @@ async function main() {
     const tabId = tab.id;
     console.log('Tab id:', tabId);
 
-    const reply = await triggerPolish(sw, tabId);
-    console.log('apply-polish reply:', JSON.stringify(reply));
+    // Fire the apply WITHOUT awaiting the reply so we can observe the modal
+    // while the (slow) LLM call is still in flight.
+    await sw.evaluate((tid) => {
+      chrome.tabs.sendMessage(tid, { type: 'apply-polish' }).catch(() => {});
+    }, tabId);
 
-    // Wait for the (slow) LLM to finish applying.
-    await page.waitForTimeout(12000);
+    const modalSeen = await page
+      .waitForSelector('#text-polisher-modal', { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    check('Polishing modal appears during transform', modalSeen);
+
+    const modalGone = await page
+      .waitForSelector('#text-polisher-modal', { state: 'detached', timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
+    check('Polishing modal removed after transform', modalGone);
+
+    // Small settle after the modal detaches, then read the final page state.
+    await page.waitForTimeout(1500);
 
     state = await pageState(page);
     console.log('After polish:', JSON.stringify(state.comments));
@@ -122,9 +137,10 @@ async function main() {
     const before = ['I am very agree with your opinion about this matter entirely.',
       'He don\'t know what he is talking about at all really.',
       'This is so good movie I have ever seen in my whole life.',
-      'She make me to do all the work for her project again.'];
+      'She make me to do all the work for her project again.',
+      'That was a really good movie, I enjoyed it a lot.'];
     const changed = state.comments.filter((c, i) => c != null && c !== before[i]).length;
-    check('Comments got rewritten by LLM', changed >= 1, `changed=${changed}/4`);
+    check('Comments got rewritten by LLM', changed >= 1, `changed=${changed}/5`);
     check('No comment became empty/blank', state.comments.every((c) => c && c.trim().length > 0));
 
     // UI untouched
@@ -133,6 +149,25 @@ async function main() {
 
     // Idempotency mark applied
     check('Roots marked data-text-polished', state.polished >= 1, `marked=${state.polished}`);
+
+    // Highlight behavior (6f623e0): rewrites are wrapped in a light-blue span
+    // whose native tooltip shows the original; a span must NEVER appear when
+    // the "polished" text is not meaningfully different from the original.
+    const highlight = await page.evaluate(() =>
+      [...document.querySelectorAll('span.text-polished')].map((s) => ({
+        title: s.getAttribute('title') ?? '',
+        text: s.textContent ?? '',
+        bg: getComputedStyle(s).backgroundColor,
+      })),
+    );
+    const norm = (x) => x.replace(/\s+/g, ' ').trim().toLowerCase();
+    check('Rewrites wrapped in highlight span with original as tooltip',
+      highlight.length >= 1, `spans=${highlight.length}`);
+    check('Highlight span has light-blue background',
+      highlight.length >= 1 && highlight.every((h) => h.bg === 'rgb(207, 228, 247)'),
+      JSON.stringify(highlight.map((h) => h.bg)));
+    check('No highlight span when text is unchanged',
+      highlight.every((h) => norm(h.title) !== norm(h.text)));
 
     // ---- CASE 2: idempotent second click ----
     const afterFirst = await pageState(page);

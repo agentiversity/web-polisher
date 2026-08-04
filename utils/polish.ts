@@ -70,21 +70,25 @@ export function collectEligibleTextNodes(
 
 const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, notConfigured: false };
 
-/** Collapse whitespace (trim + single spaces) for a visible-text comparison. */
-function collapseWhitespace(s: string): string {
-  return s.replace(/\s+/g, ' ').trim();
+/**
+ * Normalize for a visible-text comparison: collapse whitespace, lowercase,
+ * and drop punctuation — a reader would not notice any of those alone.
+ */
+function normalizeForCompare(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
  * True when two strings differ in a way a reader would actually notice.
- * Treats whitespace-only and case-only differences as "unchanged".
+ * Treats whitespace-only, case-only, and punctuation-only differences as
+ * "unchanged".
  */
 export function isMeaningfullyChanged(original: string, polished: string): boolean {
-  const a = collapseWhitespace(original);
-  const b = collapseWhitespace(polished);
-  if (a === b) return false;
-  if (a.toLowerCase() === b.toLowerCase()) return false;
-  return true;
+  return normalizeForCompare(original) !== normalizeForCompare(polished);
 }
 
 /**
