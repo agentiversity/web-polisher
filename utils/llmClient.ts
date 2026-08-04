@@ -19,15 +19,18 @@ import {
   API_KEY_STORAGE_KEY,
   API_MODEL,
   BATCH_SIZE,
+  CONFIDENCE_THRESHOLD_KEY,
+  DEFAULT_CONFIDENCE_THRESHOLD,
   LLM_TIMEOUT_MS,
   MAX_TEXT_LENGTH,
 } from './settings';
+import { passesQualityGate } from './quality';
 
 /** Per-item result of a batch transform. `text` is only meaningful when `ok`. */
 export interface TransformResult {
   ok: boolean;
   text: string;
-  /** Reason when `ok` is false: not-configured | timeout | rate-limit | network | http-<n> | internal. */
+  /** Reason when `ok` is false: not-configured | timeout | rate-limit | network | http-<n> | internal | low-confidence. */
   error?: string;
 }
 
@@ -53,6 +56,24 @@ export async function getApiKey(): Promise<string | undefined> {
   const got = await browser.storage.local.get(API_KEY_STORAGE_KEY);
   const v = got[API_KEY_STORAGE_KEY];
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+}
+
+/**
+ * Read the user's confidence threshold (0–100) from storage.local; the
+ * conservative default applies when absent or invalid. Clamped to 0–100.
+ */
+export async function getConfidenceThreshold(): Promise<number> {
+  try {
+    const got = await browser.storage.local.get(CONFIDENCE_THRESHOLD_KEY);
+    const v = got[CONFIDENCE_THRESHOLD_KEY];
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isFinite(n)) {
+      return Math.min(100, Math.max(0, n));
+    }
+  } catch {
+    // Fall through to the default; a threshold read failure must never throw.
+  }
+  return DEFAULT_CONFIDENCE_THRESHOLD;
 }
 
 /** Construct a Gemini model client from a raw API key. */
@@ -101,7 +122,11 @@ function classifyError(err: unknown): string {
 }
 
 /** Transform one bounded batch through the model; never throws. */
-async function transformBatch(model: GenerativeModel, texts: string[]): Promise<TransformResult[]> {
+async function transformBatch(
+  model: GenerativeModel,
+  texts: string[],
+  confidenceThreshold: number,
+): Promise<TransformResult[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
   try {
@@ -121,8 +146,15 @@ async function transformBatch(model: GenerativeModel, texts: string[]): Promise<
       }
       const trimmed = candidate.trim();
       if (!trimmed) return { ok: false, text: '', error: 'internal' };
-      // Keep the original when the model returned it verbatim (no improvement).
-      return { ok: true, text: trimmed.length === original.trim().length && trimmed === original ? original : trimmed };
+      // Quality gate (quality-and-confidence): reject rewrites that score below
+      // the configured threshold or that collapsed/exploded in length — the
+      // original is kept and never reaches the page or the highlight span.
+      // Verbatim/near-verbatim output scores ~100 and passes, to be dropped
+      // later by the display gate in polish.ts.
+      if (!passesQualityGate(original, trimmed, confidenceThreshold)) {
+        return { ok: false, text: '', error: 'low-confidence' };
+      }
+      return { ok: true, text: trimmed };
     });
   } catch (err) {
     const error = classifyError(err);
@@ -151,12 +183,13 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
   if (!apiKey) {
     return texts.map(() => ({ ok: false, text: '', error: 'not-configured' }));
   }
+  const confidenceThreshold = await getConfidenceThreshold();
   const model = makeClient(apiKey);
   const results: TransformResult[] = [];
   for (const batch of chunk(texts, BATCH_SIZE)) {
     // Drop oversize items from a batch silently (defensive cost guard).
     const bounded = batch.map((t) => (t.length > MAX_TEXT_LENGTH ? t.slice(0, MAX_TEXT_LENGTH) : t));
-    results.push(...(await transformBatch(model, bounded)));
+    results.push(...(await transformBatch(model, bounded, confidenceThreshold)));
   }
   return results;
 }

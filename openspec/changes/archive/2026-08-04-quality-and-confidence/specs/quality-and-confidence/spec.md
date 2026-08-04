@@ -1,6 +1,8 @@
 ## Purpose
 Guarantee transformation quality by aborting below-confidence transformations and evaluating quality before any change is applied to the page, so that poor transformations are never worse than leaving text alone.
-## Requirements
+
+## MODIFIED Requirements
+
 ### Requirement: Abort below confidence threshold
 The extension SHALL abort transformations whose confidence score is below a configurable threshold.
 
@@ -22,4 +24,3 @@ The extension SHALL evaluate transformation quality before applying the change t
 #### Scenario: Failed quality gate shows original
 - **WHEN** a polished result fails the quality gate (similarity below the threshold or length ratio out of bounds)
 - **THEN** the page continues to show the original text rather than the rejected result
-

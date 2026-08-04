@@ -53,7 +53,7 @@ form label {
   margin-bottom: 0.35rem;
 }
 
-input#api-key {
+input#api-key, input#confidence-threshold {
   width: 100%;
   padding: 0.55rem 0.65rem;
   font-size: 1rem;
@@ -62,7 +62,7 @@ input#api-key {
 }
 
 @media (prefers-color-scheme: dark) {
-  input#api-key {
+  input#api-key, input#confidence-threshold {
     border-color: #48484a;
     background: #1c1c1e;
     color: #fff;

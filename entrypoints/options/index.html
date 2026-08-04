@@ -29,6 +29,22 @@
           Google's Gemini API to transform text.
         </p>
 
+        <label for="confidence-threshold">Confidence threshold</label>
+        <input
+          id="confidence-threshold"
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          inputmode="numeric"
+          aria-describedby="threshold-help"
+        />
+        <p id="threshold-help" class="hint">
+          Rewrites whose similarity to the original scores below this (0–100)
+          are rejected and the original text is kept. Higher is stricter.
+          Default: 50.
+        </p>
+
         <div class="actions">
           <button type="submit" class="primary">Save</button>
           <button type="button" id="clear">Clear key</button>

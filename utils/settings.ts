@@ -26,3 +26,9 @@ export const BATCH_SIZE = 15;
 
 /** Per-request timeout before a batch degrades to a graceful no-op. */
 export const LLM_TIMEOUT_MS = 25000;
+
+/** Storage key for the user's confidence threshold (0–100, quality-and-confidence). */
+export const CONFIDENCE_THRESHOLD_KEY = 'confidence:threshold';
+
+/** Default confidence threshold: conservative, admits word-preserving rewrites. */
+export const DEFAULT_CONFIDENCE_THRESHOLD = 50;

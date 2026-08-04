@@ -6,12 +6,23 @@
  * ever logs the key or renders it to the DOM (input type=password).
  */
 import { browser } from 'wxt/browser';
-import { API_KEY_STORAGE_KEY } from '../../utils/settings';
+import {
+  API_KEY_STORAGE_KEY,
+  CONFIDENCE_THRESHOLD_KEY,
+  DEFAULT_CONFIDENCE_THRESHOLD,
+} from '../../utils/settings';
 
 const form = document.getElementById('settings-form') as HTMLFormElement;
 const keyInput = document.getElementById('api-key') as HTMLInputElement;
+const thresholdInput = document.getElementById('confidence-threshold') as HTMLInputElement;
 const clearBtn = document.getElementById('clear') as HTMLButtonElement;
 const statusEl = document.getElementById('status') as HTMLParagraphElement;
+
+/** Clamp and round a raw threshold value to a 0–100 integer. */
+function normalizeThreshold(raw: number): number {
+  if (!Number.isFinite(raw)) return DEFAULT_CONFIDENCE_THRESHOLD;
+  return Math.min(100, Math.max(0, Math.round(raw)));
+}
 
 function setStatus(message: string, kind: 'ok' | 'err' | '' = ''): void {
   statusEl.textContent = message;
@@ -28,6 +39,17 @@ async function loadKey(): Promise<void> {
   if (keyInput.value) setStatus('A key is configured.', 'ok');
 }
 
+async function loadThreshold(): Promise<void> {
+  try {
+    const got = await browser.storage.local.get(CONFIDENCE_THRESHOLD_KEY);
+    const raw = got[CONFIDENCE_THRESHOLD_KEY];
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    thresholdInput.value = String(Number.isFinite(n) ? normalizeThreshold(n) : DEFAULT_CONFIDENCE_THRESHOLD);
+  } catch {
+    thresholdInput.value = String(DEFAULT_CONFIDENCE_THRESHOLD);
+  }
+}
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const raw = keyInput.value.trim();
@@ -36,7 +58,10 @@ form.addEventListener('submit', async (event) => {
     return;
   }
   try {
-    await browser.storage.local.set({ [API_KEY_STORAGE_KEY]: raw });
+    await browser.storage.local.set({
+      [API_KEY_STORAGE_KEY]: raw,
+      [CONFIDENCE_THRESHOLD_KEY]: normalizeThreshold(Number(thresholdInput.value)),
+    });
     setStatus('Key saved.', 'ok');
   } catch {
     setStatus('Could not save the key.', 'err');
@@ -54,3 +79,4 @@ clearBtn.addEventListener('click', async () => {
 });
 
 void loadKey();
+void loadThreshold();

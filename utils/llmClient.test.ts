@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { transform, getApiKey } from './llmClient';
+import { transform, getApiKey, getConfidenceThreshold } from './llmClient';
+import { CONFIDENCE_THRESHOLD_KEY } from './settings';
 
 /** Hoisted mocks shared with the vi.mock factories below. */
 const mocks = vi.hoisted(() => {
@@ -70,11 +71,11 @@ describe('llmClient.transform (batch)', () => {
   it('transforms all texts when a key is configured', async () => {
     mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' });
     mockModel();
-    resolveResults(['polished one', 'polished two']);
-    const results = await transform(['text one', 'text two']);
+    resolveResults(['I completely agree with you', 'He does not know the answer']);
+    const results = await transform(['I am very agree with you', "He don't know the answer"]);
     expect(results.map((r) => [r.ok, r.text])).toEqual([
-      [true, 'polished one'],
-      [true, 'polished two'],
+      [true, 'I completely agree with you'],
+      [true, 'He does not know the answer'],
     ]);
     expect(mocks.generateContent).toHaveBeenCalledTimes(1);
   });
@@ -137,6 +138,57 @@ describe('llmClient.transform (batch)', () => {
     await expect(transform(['a b c'])).resolves.toEqual([
       { ok: false, text: '', error: 'not-configured' },
     ]);
+  });
+
+  it('rejects a low-similarity rewrite at the default threshold', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123' }); // no threshold → default 50
+    mockModel();
+    resolveResults(['completely unrelated output']);
+    const results = await transform(['a normal sentence here']);
+    expect(results[0]).toEqual({ ok: false, text: '', error: 'low-confidence' });
+  });
+
+  it('applies a stored (higher) threshold to subsequent transforms', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123', [CONFIDENCE_THRESHOLD_KEY]: 80 });
+    mockModel();
+    // 'polished one' vs 'text one' scores 50/100 — passes at 50, rejected at 80.
+    resolveResults(['polished one']);
+    const results = await transform(['text one']);
+    expect(results[0]).toEqual({ ok: false, text: '', error: 'low-confidence' });
+  });
+
+  it('threshold 0 admits any non-empty rewrite', async () => {
+    mocks.storageGet.mockResolvedValue({ [KEY]: 'ABC123', [CONFIDENCE_THRESHOLD_KEY]: 0 });
+    mockModel();
+    resolveResults(['completely unrelated output']);
+    const results = await transform(['a normal sentence here']);
+    expect(results[0]).toEqual({ ok: true, text: 'completely unrelated output' });
+  });
+});
+
+describe('getConfidenceThreshold', () => {
+  it('returns the conservative default when nothing is stored', async () => {
+    mocks.storageGet.mockResolvedValue({});
+    await expect(getConfidenceThreshold()).resolves.toBe(50);
+  });
+
+  it('reads a stored numeric threshold', async () => {
+    mocks.storageGet.mockResolvedValue({ [CONFIDENCE_THRESHOLD_KEY]: 80 });
+    await expect(getConfidenceThreshold()).resolves.toBe(80);
+  });
+
+  it('clamps out-of-range values to 0–100', async () => {
+    mocks.storageGet.mockResolvedValue({ [CONFIDENCE_THRESHOLD_KEY]: 150 });
+    await expect(getConfidenceThreshold()).resolves.toBe(100);
+    mocks.storageGet.mockResolvedValue({ [CONFIDENCE_THRESHOLD_KEY]: -5 });
+    await expect(getConfidenceThreshold()).resolves.toBe(0);
+  });
+
+  it('falls back to the default for invalid or unreadable values', async () => {
+    mocks.storageGet.mockResolvedValue({ [CONFIDENCE_THRESHOLD_KEY]: 'not-a-number' });
+    await expect(getConfidenceThreshold()).resolves.toBe(50);
+    mocks.storageGet.mockRejectedValue(new Error('storage down'));
+    await expect(getConfidenceThreshold()).resolves.toBe(50);
   });
 });
 
