@@ -6,6 +6,7 @@ import {
   clearProviderIndexCache,
   fetchProviderIndex,
   getProviderModels,
+  isEligibleModel,
   isValidCustomUrl,
   isValidModelId,
   normalizeBaseUrl,
@@ -80,6 +81,45 @@ describe('adaptIndex (models.dev schema)', () => {
   it('carries the provider model ids from the index', () => {
     const out = adaptIndex(raw);
     expect(out.find((p) => p.id === 'openai')?.models).toEqual(['gpt-4o-mini']);
+  });
+
+  it('filters non-text and deprecated/alpha models from the index', () => {
+    const raw = {
+      openai: {
+        id: 'openai', name: 'OpenAI', npm: '@ai-sdk/openai',
+        models: {
+          'gpt-ok': { id: 'gpt-ok', modalities: { output: ['text'] } },
+          'dall-e-3': { id: 'dall-e-3', modalities: { output: ['image'] } },
+          'tts-1': { id: 'tts-1', modalities: { output: ['audio'] } },
+          'embed-3': { id: 'embed-3', modalities: { output: [] } },
+          'old-model': { id: 'old-model', modalities: { output: ['text'] }, status: 'deprecated' },
+          'alpha-model': { id: 'alpha-model', modalities: { output: ['text'] }, status: 'alpha' },
+          'beta-model': { id: 'beta-model', modalities: { output: ['text'] }, status: 'beta' },
+          'no-metadata': { id: 'no-metadata' },
+        },
+      },
+    } as never;
+    const out = adaptIndex(raw);
+    expect(out.find((p) => p.id === 'openai')?.models).toEqual(['gpt-ok', 'beta-model', 'no-metadata']);
+  });
+});
+
+describe('isEligibleModel', () => {
+  it('keeps text-generating, non-deprecated models', () => {
+    expect(isEligibleModel({ id: 'm', name: 'M', modalities: { output: ['text', 'image'] } })).toBe(true);
+    expect(isEligibleModel({ id: 'm', name: 'M', modalities: { output: ['text'] }, status: 'beta' })).toBe(true);
+  });
+  it('drops models that do not output text', () => {
+    expect(isEligibleModel({ id: 'm', name: 'M', modalities: { output: ['image'] } })).toBe(false);
+    expect(isEligibleModel({ id: 'm', name: 'M', modalities: { output: ['audio', 'video'] } })).toBe(false);
+    expect(isEligibleModel({ id: 'm', name: 'M', modalities: { output: [] } })).toBe(false);
+  });
+  it('drops deprecated and alpha (not generally available) models', () => {
+    expect(isEligibleModel({ id: 'm', name: 'M', status: 'deprecated' })).toBe(false);
+    expect(isEligibleModel({ id: 'm', name: 'M', status: 'alpha' })).toBe(false);
+  });
+  it('keeps models without mode or status metadata (no over-filtering)', () => {
+    expect(isEligibleModel({ id: 'm', name: 'M' })).toBe(true);
   });
 });
 
@@ -183,6 +223,22 @@ describe('getProviderModels ladder', () => {
     mocks.fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }, { id: 'm2' }] }) });
     const provider: ProviderDef = { id: 'custom', name: 'custom', baseUrl: 'https://gw.test/v1', apiCompatibility: 'openai' };
     await expect(getProviderModels(provider, 'KEY')).resolves.toEqual(['m1', 'm2']);
+  });
+
+  it('gemini live-fetch keeps only models that generate content', async () => {
+    mocks.fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        models: [
+          { name: 'models/gemini-x', supportedGenerationMethods: ['generateContent', 'countTokens'] },
+          { name: 'models/embedding-001', supportedGenerationMethods: ['embedContent'] },
+          { name: 'models/tts-1', supportedGenerationMethods: ['countTokens'] },
+        ],
+      }),
+    });
+    const provider: ProviderDef = { id: 'custom', name: 'custom', baseUrl: 'https://gw.test/v1', apiCompatibility: 'gemini' };
+    await expect(getProviderModels(provider, 'KEY')).resolves.toEqual(['gemini-x']);
   });
 
   it('falls back to bundled suggestions when no key and no index models', async () => {

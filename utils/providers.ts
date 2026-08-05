@@ -97,12 +97,36 @@ export function normalizeBaseUrl(url: string, compat: ApiCompatibility): string 
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
 }
 
+interface ModelsDevModel {
+  id: string;
+  name: string;
+  /** Modes of operation — which modalities the model can emit (e.g. text/image/audio). */
+  modalities?: { input?: string[]; output?: string[] };
+  /** Availability status; `deprecated` = decommissioned/superseded, `alpha` = not generally available. */
+  status?: string;
+}
+
 interface ModelsDevEntry {
   id: string;
   name: string;
   npm: string;
   api?: string;
-  models: Record<string, { id: string }>;
+  models: Record<string, ModelsDevModel>;
+}
+
+/** models.dev statuses that mean the model should not be offered in the dropdown. */
+const EXCLUDED_MODEL_STATUSES = new Set(['alpha', 'deprecated']);
+
+/**
+ * True when a model from the index should be offered: it generates text
+ * (output modalities include "text") and is not deprecated/unavailable.
+ * Models without mode or status metadata are kept (don't over-filter).
+ */
+export function isEligibleModel(model: ModelsDevModel): boolean {
+  if (model.status && EXCLUDED_MODEL_STATUSES.has(model.status)) return false;
+  const out = model.modalities?.output;
+  if (Array.isArray(out) && !out.includes('text')) return false;
+  return true;
 }
 
 /** Map the models.dev index (Record<providerId, entry>) into ProviderDef[]. */
@@ -116,7 +140,9 @@ export function adaptIndex(raw: Record<string, ModelsDevEntry>): ProviderDef[] {
     if (rawUrl && rawUrl.includes('${')) continue; // env-var-templated URL
     const baseUrl = normalizeBaseUrl(rawUrl ?? DEFAULT_BASE_URLS[entry.id] ?? '', compat);
     if (!baseUrl || !DEFAULT_BASE_URLS[entry.id] && !rawUrl) continue;
-    const models = entry.models ? Object.keys(entry.models) : undefined;
+    const models = entry.models
+      ? Object.keys(entry.models).filter((id) => isEligibleModel(entry.models[id]!))
+      : undefined;
     out.push({ id: entry.id, name: entry.name, baseUrl, apiCompatibility: compat, models });
   }
   return out;
@@ -240,9 +266,13 @@ async function fetchModelsLive(
         `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
       );
       if (!res.ok) return undefined;
-      const data = (await res.json()) as { models?: { name?: string }[] };
+      // Filter to models that can generate content: the list also contains
+      // embedding/retrieval-only and TTS models without generateContent.
+      const data = (await res.json()) as { models?: { name?: string; supportedGenerationMethods?: string[] }[] };
       models = Array.isArray(data.models)
-        ? data.models.map((m) => (m?.name ?? '').replace(/^models\//, '')).filter(Boolean)
+        ? data.models
+            .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+            .map((m) => (m?.name ?? '').replace(/^models\//, '')).filter(Boolean)
         : undefined;
     }
     if (models && models.length > 0) await writeModelsCache(cacheKey, models);
