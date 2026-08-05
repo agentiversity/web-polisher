@@ -2,18 +2,23 @@
  * Targeted Reddit run. Live Reddit is blocked anonymously (403/login wall), so
  * this serves a faithful old.reddit + new-reddit(shadow) DOM through a URL
  * spoofed to old.reddit.com, activating the extension's REAL reddit.com site
- * profile (content selectors + exclusions) end-to-end with the live Gemini LLM.
+ * profile (content selectors + exclusions) end-to-end with the live LLM.
  */
 import { chromium } from 'playwright';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readProviderConfig } from './provider.mjs';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(dir, '..');
 const EXT = path.join(ROOT, '.output', 'chrome-mv3');
 const URL = 'https://old.reddit.com/r/Test/comments/1abc/topic/';
 
-const key = fs.readFileSync(path.join(ROOT, '.env.local'), 'utf8').match(/^GEMINI_API_KEY=(.+)$/m)[1].trim();
+const provider = readProviderConfig();
+if (!provider) {
+  console.error('No API key found in .env.local (set OPENCODE_API_KEY or GEMINI_API_KEY).');
+  process.exit(1);
+}
 
 const HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>topic : r/Test</title></head><body>
 <div id="header"><a class="submit">submit</a><input id="search"></div>
@@ -69,17 +74,10 @@ async function main() {
   });
   try {
     let sw = ctx.serviceWorkers()[0]; if (!sw) sw = await ctx.waitForEvent('serviceworker',{timeout:15000});
-    await sw.evaluate(async k => {
-      await chrome.storage.local.set({
-        'llm:config': {
-          providerId: 'google',
-          baseUrl: 'https://generativelanguage.googleapis.com',
-          apiCompatibility: 'gemini',
-          model: 'gemini-3.1-flash-lite',
-          apiKey: k,
-        },
-      });
-    }, key);
+    console.log(`Provider: ${provider.providerId} / ${provider.model}`);
+    await sw.evaluate(async cfg => {
+      await chrome.storage.local.set({ 'llm:config': cfg });
+    }, provider);
 
     const page = await ctx.newPage();
     await page.route(URL, r => r.fulfill({ status:200, contentType:'text/html', body: HTML }));

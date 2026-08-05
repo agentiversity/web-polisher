@@ -2,8 +2,11 @@
  * REAL Firefox end-to-end test (geckodriver + Selenium).
  *
  * Loads the packaged Firefox xpi as a temporary add-on, opens a local fixture
- * page, and drives the actual content -> background -> Gemini pipeline through a
+ * page, and drives the actual content -> background -> LLM pipeline through a
  * WebDriver-only bridge in the content script (active only under geckodriver).
+ *
+ * The provider is read from .env.local by ./provider.mjs (OPENCODE_API_KEY →
+ * OpenCode Go / deepseek-v4-flash, else GEMINI_API_KEY / gemini-3.1-flash-lite).
  *
  * Usage: node e2e/firefox-e2e.mjs
  */
@@ -14,6 +17,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readProviderConfig } from './provider.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -22,7 +26,11 @@ const FIXTURE = path.join(__dirname, 'fixture.html');
 const PORT = 8124;
 const BASE = `http://localhost:${PORT}`;
 
-const key = fs.readFileSync(path.join(ROOT, '.env.local'), 'utf8').match(/^GEMINI_API_KEY=(.+)$/m)[1].trim();
+const provider = readProviderConfig();
+if (!provider) {
+  console.error('No API key found in .env.local (set OPENCODE_API_KEY or GEMINI_API_KEY).');
+  process.exit(1);
+}
 
 function serve() {
   const html = fs.readFileSync(FIXTURE, 'utf8');
@@ -103,15 +111,25 @@ async function main() {
       15000,
     );
     console.log('PASS content script injected in Firefox (prod build)');
+    console.log(`Provider: ${provider.providerId} / ${provider.model}`);
     check('Content script injected (prod Firefox)', true);
 
-    // Seed the API key through the content-script bridge. The key is passed via
-    // a DOM attribute (crosses content/page worlds in Firefox; event `detail` does not),
-    // and the content script writes it to browser.storage.local.
+    // Seed the API key + provider config through the content-script bridge. The
+    // key is passed via a DOM attribute (crosses content/page worlds in Firefox;
+    // event `detail` does not), and the content script writes them to
+    // browser.storage.local.
+    const seedConfig = JSON.stringify({
+      providerId: provider.providerId,
+      baseUrl: provider.baseUrl,
+      apiCompatibility: provider.apiCompatibility,
+      model: provider.model,
+    });
     await driver.executeScript(
-      `document.documentElement.setAttribute('data-seed-key', '${key}');` +
+      `document.documentElement.setAttribute('data-seed-key', arguments[0]);` +
+      `document.documentElement.setAttribute('data-seed-config', arguments[1]);` +
       `document.documentElement.removeAttribute('data-seed-done');` +
       `window.dispatchEvent(new CustomEvent('textpolisher:setkey'));`,
+      provider.apiKey, seedConfig,
     );
     const seeded = await driver
       .wait(async () => (await driver.executeScript(`return document.documentElement.hasAttribute('data-seed-done')`)) === true, 8000)
@@ -127,6 +145,14 @@ async function main() {
     if (detail.err) console.log('POLISH ERROR:', detail.err);
     const res = detail;
     check('page->content bridge fired (ack)', !!detail.ack, `ack=${detail.ack}`);
+
+    // Dump browser console (content-script + background logs) for diagnostics.
+    try {
+      const entries = await driver.manage().logs().get('browser');
+      for (const e of entries) {
+        if (e.level.level > 900 || e.message.includes('Text Polisher')) console.log(`[${e.level.name}] ${e.message}`);
+      }
+    } catch { /* console capture unsupported */ }
 
     const after = await readComments(driver);
     console.log('AFTER:', JSON.stringify(after.comments));

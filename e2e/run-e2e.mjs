@@ -3,7 +3,10 @@
  *
  * Loads the Chrome build of the extension into a Playwright Chromium persistent
  * context, serves a local fixture page of awkward ESL comments + UI, then drives
- * the apply-polish flow end to end (content script -> background -> Gemini API).
+ * the apply-polish flow end to end (content script -> background -> LLM API).
+ *
+ * The provider is read from .env.local by ./provider.mjs (OPENCODE_API_KEY →
+ * OpenCode Go / deepseek-v4-flash, else GEMINI_API_KEY / gemini-3.1-flash-lite).
  *
  * Usage: node e2e/run-e2e.mjs
  */
@@ -13,6 +16,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readProviderConfig } from './provider.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -20,13 +24,6 @@ const EXT_PATH = path.join(ROOT, '.output', 'chrome-mv3');
 const FIXTURE = path.join(__dirname, 'fixture.html');
 const PORT = 8123;
 const BASE = `http://localhost:${PORT}`;
-
-// Read the real Gemini key from .env.local
-function readKey() {
-  const raw = fs.readFileSync(path.join(ROOT, '.env.local'), 'utf8');
-  const m = raw.match(/^GEMINI_API_KEY=(.+)$/m);
-  return m ? m[1].trim() : undefined;
-}
 
 function serve() {
   const html = fs.readFileSync(FIXTURE, 'utf8');
@@ -74,8 +71,14 @@ async function triggerPolish(sw, tabId) {
 }
 
 async function main() {
-  const apiKey = readKey();
-  console.log(`API key present: ${!!apiKey}`);
+  const provider = readProviderConfig();
+  console.log(`Provider configured: ${!!provider}${provider ? ` (${provider.providerId} / ${provider.model})` : ''}`);
+  if (!provider) {
+    console.error('No API key found in .env.local (set OPENCODE_API_KEY or GEMINI_API_KEY).');
+    process.exit(1);
+  }
+  const { apiKey, ...llmConfig } = provider;
+  const storedConfig = { ...llmConfig, apiKey };
 
   const server = serve();
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polisher-e2e-'));
@@ -91,21 +94,26 @@ async function main() {
     if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 15000 });
     console.log('Service worker:', sw.url());
 
-    // Set the API key in storage.local
-    await sw.evaluate(async (k) => {
-      await chrome.storage.local.set({
-        'llm:config': {
-          providerId: 'google',
-          baseUrl: 'https://generativelanguage.googleapis.com',
-          apiCompatibility: 'gemini',
-          model: 'gemini-3.1-flash-lite',
-          apiKey: k,
-        },
-      });
-    }, apiKey);
+    // Set the provider config in storage.local
+    await sw.evaluate(async (cfg) => {
+      await chrome.storage.local.set({ 'llm:config': cfg });
+    }, storedConfig);
 
     const page = await context.newPage();
     await page.goto(BASE + '/fixture.html');
+
+    // Wait until the content script is fully injected (webdriver-only marker
+    // set after its message listener is registered), so apply-polish is never
+    // sent to a not-yet-ready frame.
+    try {
+      await page.waitForFunction(
+        () => document.documentElement?.hasAttribute('data-text-polisher-injected'),
+        { timeout: 10000 },
+      );
+    } catch {
+      // Marker unavailable (non-webdriver launch): fall back to a fixed settle.
+      await page.waitForTimeout(2000);
+    }
 
     // Small settle; comment text should be the original awkward English.
     await page.waitForTimeout(500);

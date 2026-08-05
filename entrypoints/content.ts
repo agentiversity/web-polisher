@@ -149,20 +149,28 @@ export default defineContentScript({
         showPolishingModal();
         void startPolish(window.location.hostname)
           .then((result) => {
-            document.documentElement.setAttribute('data-text-polisher-done', JSON.stringify({ replaced: result.applied, notConfigured: result.notConfigured }));
+            document.documentElement.setAttribute('data-text-polisher-done', JSON.stringify({ replaced: result.applied, requested: result.requested, blocks: result.blocks, notConfigured: result.notConfigured }));
           })
           .catch((err) => document.documentElement.setAttribute('data-text-polisher-err', String(err)))
           .finally(() => hidePolishingModal());
       };
       window.addEventListener('textpolisher:apply', runPolish);
-      // WebDriver-only: seed the API key. Reads it from a DOM attribute (which
-      // crosses content/page worlds in Firefox), then forwards to the background,
-      // which stores it in the same storage `getLlmConfig` reads.
+      // WebDriver-only: seed the API key + optional full provider config. Reads
+      // them from DOM attributes (which cross content/page worlds in Firefox),
+      // then forwards to the background, which stores the same config
+      // `getLlmConfig` reads.
       window.addEventListener('textpolisher:setkey', () => {
         const k = document.documentElement.getAttribute('data-seed-key');
         if (k && navigator.webdriver) {
+          const cfgRaw = document.documentElement.getAttribute('data-seed-config');
+          let config: unknown;
+          try {
+            config = cfgRaw ? JSON.parse(cfgRaw) : undefined;
+          } catch {
+            config = undefined;
+          }
           void browser.runtime
-            .sendMessage({ type: 'set-test-key', key: k } as never)
+            .sendMessage({ type: 'set-test-key', key: k, config } as never)
             .then(() => document.documentElement.setAttribute('data-seed-done', 'true'))
             .catch(() => document.documentElement.setAttribute('data-seed-done', 'err'));
         }

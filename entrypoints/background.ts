@@ -1,7 +1,7 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { browser } from 'wxt/browser';
 import { transform, getLlmConfig } from '../utils/llmClient';
-import { DEFAULT_GEMINI_MODEL, LLM_CONFIG_KEY, MAX_TEXT_LENGTH } from '../utils/settings';
+import { DEFAULT_GEMINI_MODEL, LLM_CONFIG_KEY, MAX_TEXT_LENGTH, type LlmConfig } from '../utils/settings';
 
 /**
  * Text Polisher background service worker (design D4).
@@ -93,8 +93,10 @@ export default defineBackground(() => {
         return true; // asynchronous sendResponse
       }
 
-      // TEST-ONLY (Selenium harness): store a Gemini config the way the app reads
-      // it. Not reachable from real pages; used to seed storage for automated E2E.
+      // TEST-ONLY (Selenium harness): store a config the way the app reads it.
+      // Not reachable from real pages; used to seed storage for automated E2E.
+      // Accepts an optional full config (providerId/baseUrl/compat/model); the
+      // API key always comes from the message. Defaults to a Gemini config.
       if (
         message && typeof message === 'object' &&
         (message as { type?: string }).type === 'set-test-key' &&
@@ -102,15 +104,19 @@ export default defineBackground(() => {
       ) {
         void (async () => {
           try {
-            await browser.storage.local.set({
-              [LLM_CONFIG_KEY]: {
-                providerId: 'google',
-                baseUrl: 'https://generativelanguage.googleapis.com',
-                apiCompatibility: 'gemini',
-                model: DEFAULT_GEMINI_MODEL,
-                apiKey: (message as { key: string }).key,
-              },
-            });
+            const key = (message as { key: string }).key;
+            const cfg = (message as { config?: unknown }).config;
+            const llmConfig: LlmConfig =
+              cfg && typeof cfg === 'object'
+                ? ({ ...(cfg as LlmConfig), apiKey: key })
+                : {
+                    providerId: 'google',
+                    baseUrl: 'https://generativelanguage.googleapis.com',
+                    apiCompatibility: 'gemini',
+                    model: DEFAULT_GEMINI_MODEL,
+                    apiKey: key,
+                  };
+            await browser.storage.local.set({ [LLM_CONFIG_KEY]: llmConfig });
             sendResponse({ ok: true });
           } catch {
             sendResponse({ ok: false });
