@@ -61,16 +61,11 @@
           id="confidence-threshold"
           type="number"
           min="0"
-          max="100"
+          max="90"
           step="1"
           inputmode="numeric"
-          aria-describedby="threshold-help"
+          title="A rewrite is only applied when its similarity to the original scores at least this value. Set it low to have more text rewritten; raise it to be more conservative — the higher you set it, the more text stays exactly as it was. Default: 50. Range: 0–90."
         />
-        <p id="threshold-help" class="hint">
-          Rewrites whose similarity to the original scores below this (0–100)
-          are rejected and the original text is kept. Higher is stricter.
-          Default: 50.
-        </p>
 
         <div class="actions">
           <button type="submit" class="primary">Save</button>

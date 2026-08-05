@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { polishContent, polishRoot, collectEligibleTextNodes, isMeaningfullyChanged } from './polish';
+import { polishContent, polishRoot, collectEligibleTextNodes, isMeaningfullyChanged, PENDING_CLASS } from './polish';
 import { PROCESSED_ATTR, markProcessed } from './textReplacer';
 import { MIN_TEXT_LENGTH } from './settings';
 const mocks = vi.hoisted(() => ({
@@ -77,6 +77,57 @@ describe('polishContent', () => {
     for (const article of document.querySelectorAll('article')) {
       expect(article.hasAttribute(PROCESSED_ATTR)).toBe(true);
     }
+  });
+
+  it('exposes the confidence score on the highlighted parent and in the tooltip', async () => {
+    setupArticles();
+    mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) =>
+      replyFor(
+        msg.texts.map((t) => ({
+          ok: true,
+          text: t.startsWith('this is a user comment') ? 'A clearly rewritten comment here' : 'A clearly rewritten comment there',
+          confidence: t.startsWith('this is a user comment') ? 91 : 88,
+        })),
+      ),
+    );
+
+    const result = await polishContent('example.com');
+    expect(result.applied).toBe(2);
+    const highlighted = [...document.querySelectorAll<HTMLElement>('.text-polished')];
+    expect(highlighted).toHaveLength(2);
+    expect(highlighted.map((s) => s.dataset.confidence)).toEqual(['91', '88']);
+    expect(highlighted[0]!.title).toContain('Confidence: 91');
+    expect(highlighted[0]!.title).toContain('this is a user comment that is long enough to transform');
+  });
+
+  it('marks a block as pending while the rewrite is in flight and clears it after', async () => {
+    document.body.innerHTML = '<article><p>a single comment text that is long enough to transform here</p></article>';
+    let resolveSend!: (r: unknown) => void;
+    mocks.sendMessage.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+
+    const promise = polishContent('example.com');
+    // While the LLM call is in flight, the block carries the pending animation.
+    await vi.waitFor(
+      () => expect(document.querySelector('article p')?.classList.contains(PENDING_CLASS)).toBe(true),
+      { timeout: 2000 },
+    );
+    resolveSend!(replyFor([{ ok: true, text: 'A clearly rewritten version here' }]));
+    await promise;
+
+    const p = document.querySelector('article p') as HTMLElement;
+    expect(p.classList.contains(PENDING_CLASS)).toBe(false);
+    expect(p.classList.contains('text-polished')).toBe(true);
+  });
+
+  it('clears the pending state and keeps the original when the text is unchanged', async () => {
+    document.body.innerHTML = '<article><p>This sentence is already completely natural English text here.</p></article>';
+    mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'This sentence is already completely natural English text here.' }]));
+
+    const result = await polishContent('example.com');
+    expect(result.applied).toBe(0);
+    const p = document.querySelector('article p') as HTMLElement;
+    expect(p.classList.contains(PENDING_CLASS)).toBe(false);
+    expect(p.classList.contains('text-polished')).toBe(false);
   });
 
   it('is a graceful no-op and marks nothing when not configured', async () => {
@@ -223,12 +274,13 @@ describe('edge cases', () => {
     document.body.innerHTML =
       '<article><p>first comment text that is long enough to transform</p>' +
       '<p>second comment text that is also long enough to transform</p></article>';
-    // One result for two nodes — the second node is skipped, nothing crashes.
-    mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'ONLY ONE' }]));
+    // Each node is its own batch (BATCH_SIZE 1); a reply with no results for a
+    // node means nothing is applied — nothing crashes.
+    mocks.sendMessage.mockResolvedValue(replyFor([]));
 
     const result = await polishContent('example.com');
-    expect(result.applied).toBe(1);
-    expect(document.body.textContent).toContain('ONLY ONE');
+    expect(result.applied).toBe(0);
+    expect(document.body.textContent).not.toContain('ONLY ONE');
   });
 
   it('handles null result items gracefully', async () => {

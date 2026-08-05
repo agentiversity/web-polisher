@@ -14,9 +14,12 @@
 import { findUserContentRoots } from './contentDetector';
 import { polishRoots, type PolishResult } from './polish';
 import { PROCESSED_ATTR } from './textReplacer';
-import { MIN_TEXT_LENGTH, MUTATION_SCAN_DELAY_MS, SCROLL_PAUSE_MS, VIEWPORT_MARGIN_PX } from './settings';
+import { MIN_TEXT_LENGTH, MUTATION_SCAN_BACKOFF_MAX_MS, MUTATION_SCAN_DELAY_MS, SCROLL_PAUSE_MS, VIEWPORT_MARGIN_PX } from './settings';
 
 const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false };
+
+/** Lifecycle status surfaced to the UI (toolbar icon). */
+export type PipelineStatus = 'idle' | 'running' | 'paused' | 'done';
 
 export class PolishPipeline {
   private readonly hostname: string;
@@ -34,9 +37,46 @@ export class PolishPipeline {
   private mutationTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingNodes = new Set<Node>();
   private stopped = false;
+  private paused = false;
+  private inFlight = 0;
+  private status: PipelineStatus = 'idle';
+  private readonly statusCallback?: (status: PipelineStatus) => void;
 
-  constructor(hostname: string) {
+  constructor(hostname: string, statusCallback?: (status: PipelineStatus) => void) {
     this.hostname = hostname;
+    this.statusCallback = statusCallback;
+  }
+
+  get state(): PipelineStatus {
+    return this.status;
+  }
+
+  private setState(s: PipelineStatus): void {
+    if (this.status === s) return;
+    this.status = s;
+    this.statusCallback?.(s);
+  }
+
+  /** Recompute the lifecycle status from the current flags/queues. */
+  private recomputeStatus(): void {
+    if (this.stopped) return this.setState('idle');
+    if (this.paused) return this.setState('paused');
+    if (this.inFlight > 0 || this.roots.size > 0 || this.queued.size > 0) return this.setState('running');
+    return this.setState('done');
+  }
+
+  /** Pause processing: queued/observed work waits until `resume()`. */
+  pause(): void {
+    if (this.stopped || this.paused) return;
+    this.paused = true;
+    this.recomputeStatus();
+  }
+
+  /** Resume processing from where it paused. */
+  resume(): void {
+    if (this.stopped || !this.paused) return;
+    this.paused = false;
+    this.recomputeStatus();
   }
 
   /**
@@ -45,14 +85,19 @@ export class PolishPipeline {
    */
   async start(): Promise<PolishResult> {
     if (!document.body) return EMPTY;
+    this.setState('running');
     const all = findUserContentRoots(document.body, this.hostname);
-    if (all.length === 0) return EMPTY;
+    if (all.length === 0) {
+      this.recomputeStatus();
+      return EMPTY;
+    }
     this.wireScroll();
 
     if (typeof IntersectionObserver === 'undefined') {
       // No IO (jsdom): single full pass, same as before Phase 4.
       for (const root of all) this.enqueue(root);
       await this.chain;
+      this.recomputeStatus();
       return { ...this.stats, blocks: all.length, pending: 0 };
     }
 
@@ -63,10 +108,11 @@ export class PolishPipeline {
       else this.roots.add(root);
     }
     this.startObservers();
-    // Batch the initial pass across all in-view roots (one LLM request, not one
-    // per root) — bounded batches stay intact (design D2).
-    const initial = await polishRoots(near, this.hostname);
-    this.accumulate(initial);
+    // Initial pass goes through the serial chain (one root at a time) so a
+    // pause/resume toggle can gate it; each root is processed independently.
+    for (const root of near) this.enqueue(root);
+    await this.chain;
+    this.recomputeStatus();
     return { ...this.stats, blocks: all.length, pending: this.roots.size };
   }
 
@@ -80,6 +126,7 @@ export class PolishPipeline {
     if (this.scrollTimer !== null) clearTimeout(this.scrollTimer);
     if (this.mutationTimer !== null) clearTimeout(this.mutationTimer);
     window.removeEventListener('scroll', this.onScroll);
+    this.recomputeStatus();
     if (activePipeline === this) activePipeline = null;
   }
 
@@ -126,28 +173,44 @@ export class PolishPipeline {
   }
 
   /** Debounced re-detection pass; deferred while the user is actively scrolling. */
+  private scanBackoffMs = MUTATION_SCAN_DELAY_MS;
+
   private scheduleScan(): void {
     if (this.mutationTimer !== null || this.stopped) return;
     this.mutationTimer = setTimeout(() => {
       this.mutationTimer = null;
       if (this.stopped) return;
       // Detection reads layout (getBoundingClientRect/getComputedStyle), which
-      // causes scroll jank, so defer it until the user stops scrolling. The
-      // debounce plus the observer-side pre-filter keeps idle CPU near zero.
-      if (this.scrollPaused) {
+      // causes scroll jank, so defer it until the user stops scrolling, and
+      // while the user has paused polishing. The debounce plus the
+      // observer-side pre-filter keeps idle CPU near zero.
+      if (this.scrollPaused || this.paused) {
         this.scheduleScan();
         return;
       }
-      this.scanForNewRoots();
-    }, MUTATION_SCAN_DELAY_MS);
+      const found = this.scanForNewRoots();
+      // Idle backoff: when scans keep finding nothing new, space them out (up to
+      // a cap) so a churny page no longer costs sustained CPU — Firefox flags
+      // extensions whose content scripts run continuously. Any discovery (or the
+      // user scrolling, which usually precedes new content) resets the backoff.
+      if (found) {
+        this.scanBackoffMs = MUTATION_SCAN_DELAY_MS;
+      } else {
+        this.scanBackoffMs = Math.min(MUTATION_SCAN_BACKOFF_MAX_MS, this.scanBackoffMs * 2);
+      }
+    }, this.scanBackoffMs);
   }
 
-  /** Debounced scan of added subtrees for new user-content roots. */
-  private scanForNewRoots(): void {
+  /**
+   * Scan added subtrees for new user-content roots. Returns true when at least
+   * one new root was registered (so the caller can reset the idle backoff).
+   */
+  private scanForNewRoots(): boolean {
+    let found = false;
     const nodes = [...this.pendingNodes];
     this.pendingNodes.clear();
     for (const node of nodes) {
-      if (this.stopped) return;
+      if (this.stopped) return found;
       if (!node.isConnected) continue;
       const subRoot = node instanceof Element ? node : node.parentElement;
       if (!subRoot) continue;
@@ -157,10 +220,13 @@ export class PolishPipeline {
       // Scan the added node's parent so the added element itself can be detected
       // as a top-most content root (TreeWalker never yields the scan root).
       const scanRoot = subRoot.parentElement ?? subRoot;
-      for (const found of findUserContentRoots(scanRoot, this.hostname)) {
-        this.registerRoot(found);
+      const before = this.roots.size;
+      for (const foundEl of findUserContentRoots(scanRoot, this.hostname)) {
+        this.registerRoot(foundEl);
       }
+      if (this.roots.size > before) found = true;
     }
+    return found;
   }
 
   private registerRoot(el: Element): void {
@@ -190,13 +256,17 @@ export class PolishPipeline {
   }
 
   private async processOne(el: Element): Promise<void> {
+    if (this.stopped || el.hasAttribute(PROCESSED_ATTR)) return;
+    this.inFlight++;
+    this.recomputeStatus();
     try {
-      if (this.stopped || el.hasAttribute(PROCESSED_ATTR)) return;
       await this.waitWhilePaused();
       if (this.stopped || el.hasAttribute(PROCESSED_ATTR)) return;
       this.accumulate(await polishRoots([el], this.hostname));
     } finally {
+      this.inFlight--;
       this.queued.delete(el);
+      this.recomputeStatus();
     }
   }
 
@@ -210,7 +280,7 @@ export class PolishPipeline {
   }
 
   private async waitWhilePaused(): Promise<void> {
-    while (this.scrollPaused && !this.stopped) {
+    while ((this.scrollPaused || this.paused) && !this.stopped) {
       await new Promise<void>((resolve) => setTimeout(resolve, 100));
     }
   }
@@ -221,6 +291,9 @@ export class PolishPipeline {
 
   private readonly onScroll = (): void => {
     this.scrollPaused = true;
+    // Scrolling usually precedes new content (infinite scroll), so the next
+    // mutation scan should happen promptly rather than on a long idle backoff.
+    this.scanBackoffMs = MUTATION_SCAN_DELAY_MS;
     if (this.scrollTimer !== null) clearTimeout(this.scrollTimer);
     this.scrollTimer = setTimeout(() => {
       this.scrollPaused = false;
@@ -246,4 +319,19 @@ export async function startPolish(hostname: string): Promise<PolishResult> {
 /** Tear down any running pipeline (e.g. page lifecycle reset). */
 export function stopPolish(): void {
   activePipeline?.stop();
+}
+
+/** Pause the active pipeline (toggle): queued work waits until resume. */
+export function pausePolish(): void {
+  activePipeline?.pause();
+}
+
+/** Resume the active pipeline from where it paused. */
+export function resumePolish(): void {
+  activePipeline?.resume();
+}
+
+/** Current lifecycle status of the active pipeline (for the toolbar icon). */
+export function currentPipelineState(): PipelineStatus {
+  return activePipeline?.state ?? 'idle';
 }

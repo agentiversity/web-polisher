@@ -69,7 +69,7 @@ const check = (n, c, x='') => { if(!c) failures++; console.log(`${c?'PASS':'FAIL
 
 async function main() {
   const ctx = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(),'reddit-e2e-')), {
-    headless: false,
+    headless: process.env.HEADLESS !== 'false',
     args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
   });
   try {

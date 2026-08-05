@@ -83,8 +83,9 @@ describe('buildConfig', () => {
 });
 
 describe('normalizeThreshold', () => {
-  it('clamps and rounds to 0–100', () => {
-    expect(normalizeThreshold(150)).toBe(100);
+  it('clamps and rounds to 0–MAX (so a too-strict value cannot break rewriting)', () => {
+    expect(normalizeThreshold(150)).toBe(90);
+    expect(normalizeThreshold(100)).toBe(90);
     expect(normalizeThreshold(-5)).toBe(0);
     expect(normalizeThreshold(80.6)).toBe(81);
   });

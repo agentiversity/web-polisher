@@ -1,79 +1,63 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { browser } from 'wxt/browser';
 import { transform, getLlmConfig } from '../utils/llmClient';
-import { DEFAULT_GEMINI_MODEL, LLM_CONFIG_KEY, MAX_TEXT_LENGTH, type LlmConfig } from '../utils/settings';
+import { DEFAULT_GEMINI_MODEL, LLM_CONFIG_KEY, type LlmConfig } from '../utils/settings';
+import type { PipelineStatus } from '../utils/pipeline';
+import {
+  isPingMessage,
+  isPolisherStatusMessage,
+  isTransformTextMessage,
+  isSetTestKeyMessage,
+  type ApplyPolishResponse,
+  type PingResponse,
+  type SetTestKeyResponse,
+  type TransformTextReply,
+} from '../utils/messages';
 
 /**
  * Text Polisher background service worker (design D4).
  *
  * In MV3 this is the only place that may make cross-origin requests (content
  * scripts are blocked by CORS). All LLM API calls route through here via the
- * `transform-text` message handled below.
+ * `transform-text` message handled below. It also tracks each tab's polishing
+ * status (reported by the content script) to drive the toolbar icon.
  */
 
-export interface PingMessage {
-  type: 'ping';
-  payload?: unknown;
-}
-
-export interface PingResponse {
-  ok: true;
-  echo: unknown;
-  from: 'background';
-}
-
-/** Message the background sends to a tab's content script to apply polishing. */
-export interface ApplyPolishMessage {
-  type: 'apply-polish';
-}
-
-/** Message the content script sends to the background to transform a batch. */
-export interface TransformTextMessage {
-  type: 'transform-text';
-  texts: string[];
-}
-
-export interface TransformTextReply {
-  type: 'transform-text-result';
-  results: { ok: boolean; text: string; error?: string }[];
-  /** True when no API key is set — content script should do nothing. */
-  notConfigured: boolean;
-}
+/** Toolbar icon set per lifecycle status (gray=idle, blue=running, amber=paused, green=done). */
+const STATUS_ICONS: Record<PipelineStatus, Record<string, string>> = {
+  idle: { 16: 'icon/16.png', 32: 'icon/32.png', 48: 'icon/48.png', 128: 'icon/128.png' },
+  running: { 16: 'icon/16-running.png', 32: 'icon/32-running.png', 48: 'icon/48-running.png', 128: 'icon/128-running.png' },
+  paused: { 16: 'icon/16-paused.png', 32: 'icon/32-paused.png', 48: 'icon/48-paused.png', 128: 'icon/128-paused.png' },
+  done: { 16: 'icon/16-done.png', 32: 'icon/32-done.png', 48: 'icon/48-done.png', 128: 'icon/128-done.png' },
+};
 
 export default defineBackground(() => {
   console.debug('[Text Polisher] background service worker loaded');
 
-    // Toolbar action button (user-actions). Clicking applies polishing to the
-    // active page by forwarding an apply-polish message to that tab's content
-    // script. `action.onClicked` is a user gesture, which grants `activeTab`
-    // access to the clicked tab (design D2).
-    browser.action.onClicked.addListener((tab) => {
-      if (typeof tab.id === 'number') {
-        browser.tabs
-          .sendMessage(tab.id, { type: 'apply-polish' } satisfies ApplyPolishMessage)
-          .then((reply) => console.debug('[Text Polisher] applied polish, reply:', reply))
-          .catch((err) =>
-            // Active tab may have no content script (e.g. about:/restricted); log, don't crash.
-            console.debug('[Text Polisher] could not apply polish to tab:', err),
-          );
-      }
-    });
+  /** Per-tab polishing status; drives the action icon for the active tab. */
+  const statusByTab = new Map<number, PipelineStatus>();
 
-    browser.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-      if (message && typeof message === 'object' && (message as PingMessage).type === 'ping') {
-        const payload = (message as PingMessage).payload;
-        console.debug('[Text Polisher] background received ping:', payload);
-        sendResponse({ ok: true, echo: payload, from: 'background' } satisfies PingResponse);
+  function setIconForTab(tabId: number): void {
+    const status = statusByTab.get(tabId) ?? 'idle';
+    void browser.action.setIcon({ tabId, path: STATUS_ICONS[status] }).catch(() => {});
+  }
+
+  browser.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+      if (isPingMessage(message)) {
+        console.debug('[Text Polisher] background received ping:', message.payload);
+        sendResponse({ ok: true, echo: message.payload, from: 'background' } satisfies PingResponse);
         return;
       }
 
-      if (
-        message &&
-        typeof message === 'object' &&
-        (message as TransformTextMessage).type === 'transform-text' &&
-        Array.isArray((message as TransformTextMessage).texts)
-      ) {
-        const texts = (message as TransformTextMessage).texts.slice(0, MAX_TEXT_LENGTH);
+      // Content script reports its polishing lifecycle status → toolbar icon.
+      if (isPolisherStatusMessage(message) && sender.tab?.id != null) {
+        statusByTab.set(sender.tab.id, message.status as PipelineStatus);
+        setIconForTab(sender.tab.id);
+        return;
+      }
+
+      if (isTransformTextMessage(message)) {
+        const texts = message.texts;
         const notConfiguredPromise = getLlmConfig().then((c) => c === undefined);
         void (async () => {
           try {
@@ -94,18 +78,19 @@ export default defineBackground(() => {
       }
 
       // TEST-ONLY (Selenium harness): store a config the way the app reads it.
-      // Not reachable from real pages; used to seed storage for automated E2E.
-      // Accepts an optional full config (providerId/baseUrl/compat/model); the
-      // API key always comes from the message. Defaults to a Gemini config.
+      // Stripped from production builds; only enabled when the build-time flag
+      // VITE_ENABLE_TEST_BRIDGES is set. Accepts an optional full config
+      // (providerId/baseUrl/compat/model); the API key always comes from the
+      // message. Defaults to a Gemini config.
       if (
-        message && typeof message === 'object' &&
-        (message as { type?: string }).type === 'set-test-key' &&
-        typeof (message as { key?: unknown }).key === 'string'
+        import.meta.env.VITE_ENABLE_TEST_BRIDGES === 'true' &&
+        sender.id === browser.runtime.id &&
+        isSetTestKeyMessage(message)
       ) {
         void (async () => {
           try {
-            const key = (message as { key: string }).key;
-            const cfg = (message as { config?: unknown }).config;
+            const key = message.key;
+            const cfg = message.config;
             const llmConfig: LlmConfig =
               cfg && typeof cfg === 'object'
                 ? ({ ...(cfg as LlmConfig), apiKey: key })
@@ -117,9 +102,9 @@ export default defineBackground(() => {
                     apiKey: key,
                   };
             await browser.storage.local.set({ [LLM_CONFIG_KEY]: llmConfig });
-            sendResponse({ ok: true });
+            sendResponse({ ok: true } satisfies SetTestKeyResponse);
           } catch {
-            sendResponse({ ok: false });
+            sendResponse({ ok: false } satisfies SetTestKeyResponse);
           }
         })();
         return true;
@@ -128,4 +113,17 @@ export default defineBackground(() => {
       // Return undefined (and don't call sendResponse) for unhandled messages.
       return undefined;
     });
+
+  // Keep the active tab's icon in sync as the user switches tabs, and reset to
+  // "not started" when a tab starts navigating.
+  browser.tabs.onActivated.addListener((info) => setIconForTab(info.tabId));
+  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'loading') {
+      statusByTab.delete(tabId);
+      setIconForTab(tabId);
+    }
+  });
+  browser.tabs.onRemoved.addListener((tabId) => {
+    statusByTab.delete(tabId);
+  });
   });

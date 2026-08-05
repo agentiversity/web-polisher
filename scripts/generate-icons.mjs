@@ -1,6 +1,7 @@
 // Regenerate the add-on's toolbar/listing icons as PNGs (pure Node, no deps).
-// Design: blue rounded badge, three white text lines, amber sparkle — text
-// being polished. Run: node scripts/generate-icons.mjs
+// Design: rounded badge, three white text lines, sparkle. A color theme per
+// status (gray=not started, blue=in progress, amber=paused, green=complete).
+// Run: node scripts/generate-icons.mjs
 import { deflateSync } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -46,11 +47,15 @@ function encodePng(w, h, rgba) {
   return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
-// ---- palette ----
-const C_BG_TOP = [96, 165, 250]; // #60a5fa
-const C_BG_BOT = [37, 99, 235]; // #2563eb
 const C_TEXT = [255, 255, 255];
-const C_SPARK = [251, 191, 36]; // #fbbf24
+
+// Status themes: [name, badgeTop, badgeBottom, sparkle]
+const THEMES = [
+  ['', [156, 163, 175], [75, 85, 99], [248, 250, 252]], // idle: gray, white spark
+  ['-running', [96, 165, 250], [37, 99, 235], [255, 255, 255]], // in progress: blue, white spark
+  ['-paused', [251, 191, 36], [180, 83, 9], [255, 255, 255]], // paused: amber
+  ['-done', [74, 222, 128], [21, 128, 61], [255, 255, 255]], // complete: green
+];
 
 // Text bars (normalized): [x0, y0, x1, y1] — the middle line is shorter.
 const BARS = [
@@ -91,7 +96,7 @@ function insideStar(px, py, cx, cy, R, r) {
   return inside;
 }
 
-function renderIcon(size) {
+function renderIcon(size, [bgTop, bgBot, spark]) {
   const S = size * SS;
   const rgba = Buffer.alloc(S * S * 4);
   for (let py = 0; py < S; py++) {
@@ -101,9 +106,9 @@ function renderIcon(size) {
       let r, g, b, a;
       if (insideRoundedRect(nx, ny, ...BADGE)) {
         const t = ny; // vertical gradient
-        r = Math.round(C_BG_TOP[0] + (C_BG_BOT[0] - C_BG_TOP[0]) * t);
-        g = Math.round(C_BG_TOP[1] + (C_BG_BOT[1] - C_BG_TOP[1]) * t);
-        b = Math.round(C_BG_TOP[2] + (C_BG_BOT[2] - C_BG_TOP[2]) * t);
+        r = Math.round(bgTop[0] + (bgBot[0] - bgTop[0]) * t);
+        g = Math.round(bgTop[1] + (bgBot[1] - bgTop[1]) * t);
+        b = Math.round(bgTop[2] + (bgBot[2] - bgTop[2]) * t);
         a = 1;
       } else {
         r = g = b = a = 0;
@@ -117,7 +122,7 @@ function renderIcon(size) {
           }
         }
         if (insideStar(nx, ny, ...SPARK)) {
-          [r, g, b] = C_SPARK;
+          [r, g, b] = spark;
           a = 1;
         }
       }
@@ -154,5 +159,10 @@ function renderIcon(size) {
 }
 
 mkdirSync(OUT, { recursive: true });
-for (const s of SIZES) writeFileSync(join(OUT, `${s}.png`), renderIcon(s));
+for (const s of SIZES) {
+  for (const [suffix, bgTop, bgBot, spark] of THEMES) {
+    writeFileSync(join(OUT, `${s}${suffix}.png`), renderIcon(s, [bgTop, bgBot, spark]));
+  }
+}
 console.log('wrote icons to', OUT);
+

@@ -6,7 +6,7 @@
  * custom URLs + free-text model ids at the trust boundary.
  */
 import type { ApiCompatibility, LlmConfig } from './settings';
-import { DEFAULT_CONFIDENCE_THRESHOLD } from './settings';
+import { DEFAULT_CONFIDENCE_THRESHOLD, MAX_CONFIDENCE_THRESHOLD } from './settings';
 import {
   getProviderById,
   isValidCustomUrl,
@@ -81,8 +81,8 @@ export function providerOptions(providers: ProviderDef[]): { value: string; labe
   ];
 }
 
-/** Clamp and round a raw threshold value to a 0–100 integer. */
+/** Clamp and round a raw threshold value to a 0–MAX integer. */
 export function normalizeThreshold(raw: number): number {
   if (!Number.isFinite(raw)) return DEFAULT_CONFIDENCE_THRESHOLD;
-  return Math.min(100, Math.max(0, Math.round(raw)));
+  return Math.min(MAX_CONFIDENCE_THRESHOLD, Math.max(0, Math.round(raw)));
 }

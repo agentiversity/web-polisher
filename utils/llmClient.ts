@@ -20,13 +20,14 @@ import {
   BATCH_SIZE,
   CONFIDENCE_THRESHOLD_KEY,
   DEFAULT_CONFIDENCE_THRESHOLD,
+  MAX_CONFIDENCE_THRESHOLD,
   LLM_CONFIG_KEY,
   LLM_TIMEOUT_MS,
   MAX_TEXT_LENGTH,
   type ApiCompatibility,
   type LlmConfig,
 } from './settings';
-import { passesQualityGate } from './quality';
+import { passesQualityGate, confidenceScore } from './quality';
 import { getCached, loadCache, saveCache, setCached } from './cache';
 import { ApiHttpError, anthropicChat, openAiChat } from './apiClient';
 
@@ -36,6 +37,8 @@ export interface TransformResult {
   text: string;
   /** Reason when `ok` is false: not-configured | timeout | rate-limit | network | http-<n> | internal | low-confidence. */
   error?: string;
+  /** Quality-gate confidence score (0–100) for `ok` results (shown in the UI). */
+  confidence?: number;
 }
 
 /**
@@ -80,8 +83,9 @@ export async function getLlmConfig(): Promise<LlmConfig | undefined> {
 }
 
 /**
- * Read the user's confidence threshold (0–100) from storage.local; the
- * conservative default applies when absent or invalid. Clamped to 0–100.
+ * Read the user's confidence threshold (0–MAX) from storage.local; the
+ * conservative default applies when absent or invalid. Clamped so a legacy or
+ * too-strict stored value cannot silently disable rewriting.
  */
 export async function getConfidenceThreshold(): Promise<number> {
   try {
@@ -89,7 +93,7 @@ export async function getConfidenceThreshold(): Promise<number> {
     const v = got[CONFIDENCE_THRESHOLD_KEY];
     const n = typeof v === 'number' ? v : Number(v);
     if (Number.isFinite(n)) {
-      return Math.min(100, Math.max(0, n));
+      return Math.min(MAX_CONFIDENCE_THRESHOLD, Math.max(0, n));
     }
   } catch {
     // Fall through to the default; a threshold read failure must never throw.
@@ -226,7 +230,7 @@ async function transformBatch(
       if (!passesQualityGate(original, trimmed, confidenceThreshold)) {
         return { ok: false, text: '', error: 'low-confidence' };
       }
-      return { ok: true, text: trimmed };
+      return { ok: true, text: trimmed, confidence: confidenceScore(original, trimmed) };
     });
   } catch (err) {
     const error = classifyError(err);
@@ -270,7 +274,7 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
     bounded.forEach((t, i) => {
       const hit = getCached(cache, t);
       if (hit !== undefined) {
-        batchResults[i] = { ok: true, text: hit };
+        batchResults[i] = { ok: true, text: hit.polished, confidence: hit.confidence };
       } else {
         missIndexes.push(i);
         missTexts.push(t);
@@ -281,7 +285,7 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
       missResults.forEach((r, k) => {
         const idx = missIndexes[k]!;
         batchResults[idx] = r;
-        if (r.ok && r.text) setCached(cache, missTexts[k]!, r.text);
+        if (r.ok && r.text) setCached(cache, missTexts[k]!, r.text, r.confidence);
       });
     }
     results.push(...batchResults);

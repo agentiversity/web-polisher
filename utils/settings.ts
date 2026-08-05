@@ -49,17 +49,29 @@ export const MIN_TEXT_LENGTH = 12;
 /** Maximum text length sent to the model (protects payload/cost). */
 export const MAX_TEXT_LENGTH = 2000;
 
-/** Max texts per single API request (bounded batch, design D2). */
-export const BATCH_SIZE = 15;
+/**
+ * Max texts per single API request (bounded batch, design D2). A small batch
+ * keeps latency low and lets per-item results be applied as soon as the batch
+ * returns, while still amortizing request overhead across multiple text nodes.
+ * The content script sends+applies one batch at a time.
+ */
+export const BATCH_SIZE = 8;
 
 /** Per-request timeout before a batch degrades to a graceful no-op. */
-export const LLM_TIMEOUT_MS = 25000;
+export const LLM_TIMEOUT_MS = 60000;
 
 /** Storage key for the user's confidence threshold (0–100, quality-and-confidence). */
 export const CONFIDENCE_THRESHOLD_KEY = 'confidence:threshold';
 
 /** Default confidence threshold: conservative, admits word-preserving rewrites. */
 export const DEFAULT_CONFIDENCE_THRESHOLD = 50;
+
+/**
+ * Maximum confidence threshold. Kept below 100: at 100 only verbatim output
+ * would pass the gate, which is then dropped as "unchanged" — the extension
+ * would silently stop rewriting anything.
+ */
+export const MAX_CONFIDENCE_THRESHOLD = 90;
 
 /** Storage key for the polished-result cache (one object, storage.local). */
 export const CACHE_KEY = 'cache:polish:v1';
@@ -78,3 +90,9 @@ export const SCROLL_PAUSE_MS = 200;
 
 /** Debounce for MutationObserver-triggered re-detection of new content roots. */
 export const MUTATION_SCAN_DELAY_MS = 250;
+
+/**
+ * Upper bound for the idle backoff: when scans keep finding nothing new, the
+ * delay between scans doubles up to this cap so a churny page stops costing CPU.
+ */
+export const MUTATION_SCAN_BACKOFF_MAX_MS = 5000;

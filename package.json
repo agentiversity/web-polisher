@@ -14,18 +14,19 @@
     "precompile": "wxt prepare",
     "test": "vitest run",
     "pretest": "wxt prepare",
-    "test:e2e": "wxt build -b chrome && node e2e/run-e2e.mjs",
-    "test:reddit": "wxt build -b chrome && node e2e/reddit-e2e.mjs",
-    "test:firefox": "wxt build -b firefox && wxt zip -b firefox && node e2e/firefox-e2e.mjs",
+    "test:e2e": "cross-env VITE_ENABLE_TEST_BRIDGES=true wxt build -b chrome && node e2e/run-e2e.mjs",
+    "test:reddit": "cross-env VITE_ENABLE_TEST_BRIDGES=true wxt build -b chrome && node e2e/reddit-e2e.mjs",
+    "test:firefox": "cross-env VITE_ENABLE_TEST_BRIDGES=true wxt build -b firefox && wxt zip -b firefox && node e2e/firefox-e2e.mjs",
     "serve:fixture": "node e2e/serve.mjs"
   },
   "dependencies": {
-    "@fission-ai/openspec": "^1.7.0",
     "@google/generative-ai": "^0.24.1"
   },
   "devDependencies": {
+    "@fission-ai/openspec": "^1.7.0",
     "@types/firefox-webext-browser": "^143.0.0",
     "@types/jsdom": "^28.0.3",
+    "cross-env": "^7.0.3",
     "geckodriver": "^6.1.1",
     "jsdom": "^24.1.0",
     "playwright": "^1.62.1",

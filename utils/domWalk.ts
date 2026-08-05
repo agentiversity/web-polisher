@@ -120,6 +120,12 @@ export function isVisible(el: Element): boolean {
   ) {
     return false;
   }
+  // Fast path: native checkVisibility() checks the element and its ancestors
+  // without serializing computed styles. It is not available in jsdom, so fall
+  // back to the style walk when needed.
+  if (typeof (el as any).checkVisibility === 'function') {
+    return (el as any).checkVisibility();
+  }
   // Walk up the current tree to its root element, and hop across shadow
   // boundaries so a hidden light-DOM ancestor (e.g. a Tailwind `.hidden` div
   // that hides an entire Rooms panel) is seen from deep inside a shadow root.

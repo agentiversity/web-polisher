@@ -216,13 +216,19 @@ describe('fetchProviderIndex', () => {
 describe('getProviderModels ladder', () => {
   it('uses remote-index models when no key is present', async () => {
     const provider: ProviderDef = { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', apiCompatibility: 'openai', models: ['gpt-4o-mini', 'gpt-4o'] };
-    await expect(getProviderModels(provider)).resolves.toEqual(['gpt-4o-mini', 'gpt-4o']);
+    await expect(getProviderModels(provider)).resolves.toEqual(['gpt-4o', 'gpt-4o-mini']);
   });
 
   it('live-fetches the provider models endpoint with a key', async () => {
     mocks.fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [{ id: 'm1' }, { id: 'm2' }] }) });
     const provider: ProviderDef = { id: 'custom', name: 'custom', baseUrl: 'https://gw.test/v1', apiCompatibility: 'openai' };
     await expect(getProviderModels(provider, 'KEY')).resolves.toEqual(['m1', 'm2']);
+  });
+
+  it('sorts model lists alphabetically for the dropdown', async () => {
+    mocks.fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [{ id: 'z-model' }, { id: 'a-model' }, { id: 'm-model' }] }) });
+    const provider: ProviderDef = { id: 'custom', name: 'custom', baseUrl: 'https://gw.test/v1', apiCompatibility: 'openai' };
+    await expect(getProviderModels(provider, 'KEY')).resolves.toEqual(['a-model', 'm-model', 'z-model']);
   });
 
   it('gemini live-fetch keeps only models that generate content', async () => {

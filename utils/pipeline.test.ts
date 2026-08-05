@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { startPolish, stopPolish } from './pipeline';
+import { startPolish, stopPolish, pausePolish, resumePolish, PolishPipeline } from './pipeline';
 import { PROCESSED_ATTR } from './textReplacer';
 
 const mocks = vi.hoisted(() => ({ sendMessage: vi.fn() }));
@@ -175,6 +175,60 @@ describe('PolishPipeline', () => {
       () => expect(document.querySelector('[data-id="d"]')?.hasAttribute(PROCESSED_ATTR)).toBe(true),
       { timeout: 3000 },
     );
+  });
+
+  it('pauses queued work on demand and resumes from where it left off', async () => {
+    body();
+    setupRects({
+      a: { top: 0, bottom: 100 },
+      b: { top: 5000, bottom: 5100 },
+      c: { top: 6000, bottom: 6100 },
+    });
+    await startPolish('example.com'); // a processed, b+c observed
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+
+    // Pause, then bring B into view — it must not be sent to the API.
+    pausePolish();
+    FakeIO.instances[0]!.fire(document.querySelector('[data-id="b"]') as Element);
+    await tick(80);
+    expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
+
+    // Resume: queued work continues from where it paused.
+    resumePolish();
+    await vi.waitFor(() => expect(mocks.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2), {
+      timeout: 3000,
+    });
+    expect(document.querySelector('[data-id="b"]')?.hasAttribute(PROCESSED_ATTR)).toBe(true);
+    expect(document.querySelector('[data-id="c"]')?.hasAttribute(PROCESSED_ATTR)).toBe(false);
+  });
+
+  it('reports running → paused → running via the status callback', async () => {
+    body();
+    setupRects({
+      a: { top: 0, bottom: 100 },
+      b: { top: 5000, bottom: 5100 },
+      c: { top: 6000, bottom: 6100 },
+    });
+    const statuses: string[] = [];
+    const pipe = new PolishPipeline('example.com', (s) => statuses.push(s));
+    await pipe.start();
+    expect(pipe.state).toBe('running'); // b,c still observed off-screen
+    pipe.pause();
+    expect(pipe.state).toBe('paused');
+    pipe.resume();
+    expect(pipe.state).toBe('running');
+    expect(statuses).toContain('running');
+    expect(statuses).toContain('paused');
+  });
+
+  it('reports done when all content has been processed', async () => {
+    body();
+    setupRects({ a: { top: 0, bottom: 100 } }); // everything is in view
+    const statuses: string[] = [];
+    const pipe = new PolishPipeline('example.com', (s) => statuses.push(s));
+    await pipe.start();
+    expect(pipe.state).toBe('done');
+    expect(statuses).toContain('done');
   });
 
   it('falls back to a single full pass when IntersectionObserver is unavailable', async () => {

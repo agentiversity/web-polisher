@@ -31,7 +31,7 @@ You browse as normal; when you want a page's content polished, you click the too
 - ✅ Dynamic-content pickup (infinite scroll / virtualization) after the click
 - ✅ Bounded LRU result cache (storage.local) — no re-transforming the same text
 
-> **Breaking change (0.2.0):** configuration moved from the old Gemini-only key to a provider config (`llm:config`). Existing users re-enter their API key once in the new options page.
+> **Breaking change:** configuration moved from the old Gemini-only key to a provider config (`llm:config`). Existing users re-enter their API key once in the new options page.
 
 ## Requirements
 

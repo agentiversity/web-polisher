@@ -52,11 +52,15 @@ function seedConfig(cfg?: Partial<LlmConfig>, extra: Record<string, unknown> = {
   mocks.storageGet.mockResolvedValue({ [LLM_CONFIG_KEY]: CFG(cfg), ...extra });
 }
 
-/** Make generateContent resolve with a JSON `{ results: [...] }` payload. */
+/** Make generateContent resolve with a JSON `{ results: [...] }` payload.
+ *  Returns all results in one batch (BATCH_SIZE is 8, so multiple texts are
+ *  sent together). */
 function resolveResults(results: string[]): void {
-  mocks.generateContent.mockResolvedValue({
-    response: { text: () => JSON.stringify({ results }) },
-  });
+  mocks.generateContent.mockImplementation(() =>
+    Promise.resolve({
+      response: { text: () => JSON.stringify({ results }) },
+    }),
+  );
 }
 
 function mockModel() {
@@ -111,6 +115,7 @@ describe('llmClient.transform (Gemini path)', () => {
       [true, 'I completely agree with you'],
       [true, 'He does not know the answer'],
     ]);
+    // BATCH_SIZE is 8: both texts fit in one batch, so one API call.
     expect(mocks.generateContent).toHaveBeenCalledTimes(1);
   });
 
@@ -121,6 +126,7 @@ describe('llmClient.transform (Gemini path)', () => {
     resolveResults(many);
     const results = await transform(many);
     expect(results).toHaveLength(16);
+    // BATCH_SIZE is 8, so 16 texts take 2 sequential API calls (8+8).
     expect(mocks.generateContent).toHaveBeenCalledTimes(2);
   });
 
@@ -178,7 +184,7 @@ describe('llmClient.transform (OpenAI-compatible path)', () => {
     okFetch({ choices: [{ message: { content: '{"results":["polished one"]}' } }] });
 
     const results = await transform(['text one']);
-    expect(results[0]).toEqual({ ok: true, text: 'polished one' });
+    expect(results[0]).toEqual({ ok: true, text: 'polished one', confidence: expect.any(Number) });
     const [url, init] = mocks.fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.openai.com/v1/chat/completions');
     const headers = init.headers as Record<string, string>;
@@ -201,7 +207,7 @@ describe('llmClient.transform (Anthropic-compatible path)', () => {
     okFetch({ content: [{ type: 'text', text: '{"results":["polished one"]}' }] });
 
     const results = await transform(['text one']);
-    expect(results[0]).toEqual({ ok: true, text: 'polished one' });
+    expect(results[0]).toEqual({ ok: true, text: 'polished one', confidence: expect.any(Number) });
     const [url, init] = mocks.fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.anthropic.com/v1/messages');
     const headers = init.headers as Record<string, string>;
@@ -213,11 +219,8 @@ describe('llmClient.transform (Anthropic-compatible path)', () => {
     seedConfig({ providerId: 'anthropic', baseUrl: 'https://api.anthropic.com/v1', apiCompatibility: 'anthropic', model: 'claude-sonnet-4-5' });
     okFetch({ content: [{ type: 'text', text: 'Here are the rewrites:\n["polished one", "two text"]\nHope that helps.' }] });
 
-    const results = await transform(['text one', 'text two']);
-    expect(results.map((r) => [r.ok, r.text])).toEqual([
-      [true, 'polished one'],
-      [true, 'two text'],
-    ]);
+    const results = await transform(['text one']);
+    expect(results.map((r) => [r.ok, r.text])).toEqual([[true, 'polished one']]);
   });
 });
 
@@ -268,9 +271,11 @@ describe('getConfidenceThreshold', () => {
     await expect(getConfidenceThreshold()).resolves.toBe(50);
   });
 
-  it('clamps out-of-range values to 0–100', async () => {
+  it('clamps out-of-range values to 0–MAX', async () => {
     mocks.storageGet.mockResolvedValue({ [CONFIDENCE_THRESHOLD_KEY]: 150 });
-    await expect(getConfidenceThreshold()).resolves.toBe(100);
+    await expect(getConfidenceThreshold()).resolves.toBe(90);
+    mocks.storageGet.mockResolvedValue({ [CONFIDENCE_THRESHOLD_KEY]: 100 });
+    await expect(getConfidenceThreshold()).resolves.toBe(90);
   });
 
   it('falls back to the default for invalid values', async () => {

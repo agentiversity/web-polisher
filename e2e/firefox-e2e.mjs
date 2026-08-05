@@ -96,7 +96,7 @@ async function main() {
   let driver;
   try {
     const options = new firefox.Options();
-    options.addArguments('-headless');
+    if (process.env.HEADLESS !== 'false') options.addArguments('-headless');
     driver = await new Builder().forBrowser('firefox').setFirefoxOptions(options).build();
 
     console.log('Installing xpi as temporary add-on...');

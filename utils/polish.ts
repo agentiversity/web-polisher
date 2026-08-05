@@ -15,22 +15,9 @@ import { browser } from 'wxt/browser';
 import { findUserContentRoots } from './contentDetector';
 import { walkTextNodesIncludingShadow, isVisible } from './domWalk';
 import { isUiElement, markProcessed, PROCESSED_ATTR } from './textReplacer';
-import { MIN_TEXT_LENGTH, MAX_TEXT_LENGTH } from './settings';
+import { MIN_TEXT_LENGTH, MAX_TEXT_LENGTH, BATCH_SIZE } from './settings';
 import type { TransformResult } from './llmClient';
-
-/** Message the content script sends to the background to transform a batch. */
-export interface TransformTextMessage {
-  type: 'transform-text';
-  texts: string[];
-}
-
-/** Reply from the background after running the batch. */
-export interface TransformTextReply {
-  type: 'transform-text-result';
-  results: TransformResult[];
-  /** True when no API key is configured (content then does nothing). */
-  notConfigured: boolean;
-}
+import type { TransformTextMessage, TransformTextReply } from './messages';
 
 export interface PolishResult {
   /** Number of eligible text nodes collected. */
@@ -100,6 +87,21 @@ export function isMeaningfullyChanged(original: string, polished: string): boole
   return normalizeForCompare(original) !== normalizeForCompare(polished);
 }
 
+/**
+ * Class added to a text block while its rewrite request is in flight; the
+ * injected stylesheet animates it (moving light-gray diagonal stripes). It is
+ * removed when the block is rewritten (blue highlight span) or left unchanged.
+ */
+export const PENDING_CLASS = 'text-polisher-pending';
+
+function markPending(node: Text): void {
+  node.parentElement?.classList.add(PENDING_CLASS);
+}
+
+function clearPending(node: Text): void {
+  node.parentElement?.classList.remove(PENDING_CLASS);
+}
+
 /** Apply one transform result to a single collected node; true if rewritten. */
 function applyOne(node: Text, res: TransformResult | undefined): boolean {
   if (!node || !res || !res.ok || !res.text) return false;
@@ -111,23 +113,46 @@ function applyOne(node: Text, res: TransformResult | undefined): boolean {
   // Only highlight/rewrite when the change is one a reader would notice
   // (never for whitespace- or case-only differences).
   if (!isMeaningfullyChanged(original, res.text)) return false;
-  // Wrap the rewrite in a highlighted span so the user can see what changed;
-  // the original text is exposed as a native tooltip on hover.
-  const span = document.createElement('span');
-  span.className = 'text-polished';
-  span.title = original;
-  span.textContent = res.text;
-  span.style.setProperty('background-color', '#cfe4f7'); // light blue
-  span.style.setProperty('border-radius', '2px');
-  node.replaceWith(span);
+  // React-safe: mutate the text node in place (no element replacement).
+  // The parent element gets the highlight class and tooltip so the user can
+  // see what changed and compare with the original on hover.
+  node.textContent = res.text;
+  parent.classList.add('text-polished');
+  parent.title = `Original: ${original}\nConfidence: ${res.confidence ?? 'n/a'}`;
+  if (res.confidence != null) parent.dataset.confidence = String(res.confidence);
   return true;
 }
 
 /**
- * Polish a set of content roots in one batched request: collect eligible text
- * nodes across all roots → one `transform-text` message to the background →
- * apply results back to the same nodes. Roots that got at least one rewrite are
- * marked processed (idempotency), so a later pass can still retry failures.
+ * Send one `transform-text` batch to the background, retrying on failure.
+ * Firefox's MV3 background is a suspendable event page: on a cold wake the first
+ * content-script message can be dropped ("receiving end does not exist"). Retry
+ * with backoff so a wake-up race never silently turns into 0 rewrites.
+ */
+async function sendTransformBatch(texts: string[]): Promise<TransformTextReply | undefined> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await browser.runtime.sendMessage({
+        type: 'transform-text',
+        texts,
+      } satisfies TransformTextMessage);
+      if (res && typeof res === 'object' && (res as TransformTextReply).type === 'transform-text-result') {
+        return res as TransformTextReply;
+      }
+    } catch {
+      // Background still waking up — fall through and retry.
+    }
+    if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** attempt));
+  }
+  return undefined;
+}
+
+/**
+ * Polish a set of content roots: collect eligible text nodes across all roots,
+ * then send+apply them in small sequential batches so rewrites appear
+ * incrementally and one slow batch never wipes out the whole pass. Roots that
+ * got at least one rewrite are marked processed (idempotency), so a later pass
+ * can still retry failures.
  */
 export async function polishRoots(roots: Element[], hostname: string): Promise<PolishResult> {
   const blocks = roots.length;
@@ -142,50 +167,72 @@ export async function polishRoots(roots: Element[], hostname: string): Promise<P
   const requested = groups.reduce((sum, g) => sum + g.nodes.length, 0);
   if (groups.length === 0) return { requested: 0, applied: 0, blocks, pending: 0, notConfigured: false };
 
-  const texts = groups.flatMap((g) => g.nodes.map((n) => n.textContent ?? ''));
+  const flatNodes = groups.flatMap((g) => g.nodes);
+  const texts = flatNodes.map((n) => n.textContent ?? '');
 
-  let reply: TransformTextReply | undefined;
-  let sendMessageFailed = false;
-  try {
-    const res = await browser.runtime.sendMessage({
-      type: 'transform-text',
-      texts,
-    } satisfies TransformTextMessage);
-    if (res && typeof res === 'object' && (res as TransformTextReply).type === 'transform-text-result') {
-      reply = res as TransformTextReply;
+  const nodeResults = new Map<Text, TransformResult>();
+  const appliedNodes = new Set<Text>();
+  let notConfigured = false;
+  let messageFailed = false;
+
+  for (let offset = 0; offset < texts.length; offset += BATCH_SIZE) {
+    const sliceTexts = texts.slice(offset, offset + BATCH_SIZE);
+    const sliceNodes = flatNodes.slice(offset, offset + BATCH_SIZE);
+    // Show the "in progress" animation on each block while its rewrite request
+    // is in flight; it turns blue on rewrite or reverts when unchanged.
+    for (const n of sliceNodes) markPending(n);
+    const reply = await sendTransformBatch(sliceTexts);
+    if (!reply) {
+      messageFailed = true;
+      for (const n of sliceNodes) clearPending(n);
+      console.debug('[Text Polisher] transform-text message failed after retries');
+      break; // Channel is unreliable right now — keep the partial progress.
     }
-  } catch {
-    sendMessageFailed = true;
+    if (reply.notConfigured) {
+      notConfigured = true;
+      for (const n of sliceNodes) clearPending(n);
+      break;
+    }
+    for (let i = 0; i < sliceNodes.length; i++) {
+      const node = sliceNodes[i]!;
+      // Capture the parent before applyOne (replaceWith detaches the node).
+      const parent = node.parentElement;
+      const res = reply.results[i];
+      if (res) nodeResults.set(node, res);
+      if (applyOne(node, res)) appliedNodes.add(node);
+      parent?.classList.remove(PENDING_CLASS);
+    }
   }
 
-  if (sendMessageFailed || !reply || !Array.isArray(reply.results)) {
-    return { requested, applied: 0, blocks, pending: 0, notConfigured: false };
-  }
-  if (reply.notConfigured) {
-    return { requested, applied: 0, blocks, pending: 0, notConfigured: true };
-  }
-
-  let applied = 0;
-  let offset = 0;
+  const applied = appliedNodes.size;
   for (const g of groups) {
-    let groupApplied = 0;
-    let allOk = true;
-    for (let i = 0; i < g.nodes.length; i++) {
-      const res = reply.results[offset + i];
-      if (!res || !res.ok) allOk = false;
-      if (applyOne(g.nodes[i]!, res)) {
-        groupApplied++;
-        applied++;
-      }
-    }
-    offset += g.nodes.length;
+    const results = g.nodes.map((n) => nodeResults.get(n));
+    const allAttempted = results.every((r) => r !== undefined);
+    const allOk = allAttempted && results.every((r) => r!.ok);
+    const groupApplied = g.nodes.filter((n) => appliedNodes.has(n)).length;
     // Mark processed when something changed OR every node got a usable (ok)
     // result — a fully-attempted root (including verbatim/no-improvement) is
     // not worth re-requesting. Only a partial/failed pass stays unmarked so a
     // later run can retry the failures.
     if (groupApplied > 0 || allOk) markProcessed(g.root);
   }
-  return { requested, applied, blocks, pending: 0, notConfigured: false };
+
+  if (applied < requested || messageFailed) {
+    // Diagnostic: why did eligible nodes not get rewritten? Breakdowns of
+    // result errors (and low-confidence rejections) help diagnose page issues.
+    const errCounts = new Map<string, number>();
+    for (const r of nodeResults.values()) {
+      if (r && !r.ok) errCounts.set(r.error ?? 'unknown', (errCounts.get(r.error ?? 'unknown') ?? 0) + 1);
+    }
+    if (messageFailed) errCounts.set('message-failed', (errCounts.get('message-failed') ?? 0) + 1);
+    console.debug(
+      '[Text Polisher] partial apply:',
+      `applied=${applied}/${requested}`,
+      'errors=',
+      JSON.stringify(Object.fromEntries(errCounts)),
+    );
+  }
+  return { requested, applied, blocks, pending: 0, notConfigured };
 }
 
 /**

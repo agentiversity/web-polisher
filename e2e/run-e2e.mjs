@@ -84,7 +84,7 @@ async function main() {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'polisher-e2e-'));
 
   const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: false,
+    headless: process.env.HEADLESS !== 'false',
     args: [`--disable-extensions-except=${EXT_PATH}`, `--load-extension=${EXT_PATH}`],
   });
 
@@ -127,10 +127,9 @@ async function main() {
     console.log('Tab id:', tabId);
 
     // Fire the apply WITHOUT awaiting the reply so we can observe the modal
-    // while the (slow) LLM call is still in flight.
-    await sw.evaluate((tid) => {
-      chrome.tabs.sendMessage(tid, { type: 'apply-polish' }).catch(() => {});
-    }, tabId);
+    // while the LLM call is still in flight; the reply is awaited later so
+    // assertions run only after the transform actually completes.
+    const applyReply = sw.evaluate((tid) => chrome.tabs.sendMessage(tid, { type: 'apply-polish' }), tabId);
 
     const modalSeen = await page
       .waitForSelector('#text-polisher-modal', { timeout: 5000 })
@@ -138,11 +137,15 @@ async function main() {
       .catch(() => false);
     check('Polishing modal appears during transform', modalSeen);
 
+    // The indicator is brief (auto-hides) — wait until it is gone, then await
+    // the apply reply for true completion.
     const modalGone = await page
       .waitForSelector('#text-polisher-modal', { state: 'detached', timeout: 30000 })
       .then(() => true)
       .catch(() => false);
-    check('Polishing modal removed after transform', modalGone);
+    check('Polishing modal removed after trigger', modalGone);
+
+    await applyReply;
 
     // Small settle after the modal detaches, then read the final page state.
     await page.waitForTimeout(1500);
@@ -166,23 +169,24 @@ async function main() {
     // Idempotency mark applied
     check('Roots marked data-text-polished', state.polished >= 1, `marked=${state.polished}`);
 
-    // Highlight behavior (6f623e0): rewrites are wrapped in a light-blue span
-    // whose native tooltip shows the original; a span must NEVER appear when
-    // the "polished" text is not meaningfully different from the original.
+    // Highlight behavior: rewritten text nodes are mutated in place and their
+    // parent element gets the light-blue highlight + native tooltip with the
+    // original. A highlight must NEVER appear when the polished text is not
+    // meaningfully different from the original.
     const highlight = await page.evaluate(() =>
-      [...document.querySelectorAll('span.text-polished')].map((s) => ({
+      [...document.querySelectorAll('.text-polished')].map((s) => ({
         title: s.getAttribute('title') ?? '',
         text: s.textContent ?? '',
         bg: getComputedStyle(s).backgroundColor,
       })),
     );
     const norm = (x) => x.replace(/\s+/g, ' ').trim().toLowerCase();
-    check('Rewrites wrapped in highlight span with original as tooltip',
-      highlight.length >= 1, `spans=${highlight.length}`);
-    check('Highlight span has light-blue background',
+    check('Rewrites highlighted with original as tooltip',
+      highlight.length >= 1, `highlighted=${highlight.length}`);
+    check('Highlighted element has light-blue background',
       highlight.length >= 1 && highlight.every((h) => h.bg === 'rgb(207, 228, 247)'),
       JSON.stringify(highlight.map((h) => h.bg)));
-    check('No highlight span when text is unchanged',
+    check('No highlight when text is unchanged',
       highlight.every((h) => norm(h.title) !== norm(h.text)));
 
     // ---- CASE 2: idempotent second click ----

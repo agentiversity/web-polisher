@@ -285,6 +285,7 @@ async function fetchModelsLive(
 /**
  * Model list for a provider: cached live-fetch first, then remote-index models,
  * then bundled suggestions, then undefined (free-text in the options page).
+ * The result is sorted alphabetically for the dropdown.
  */
 export async function getProviderModels(
   provider: ProviderDef,
@@ -292,10 +293,11 @@ export async function getProviderModels(
   force = false,
 ): Promise<string[] | undefined> {
   const live = await fetchModelsLive(provider, apiKey, force);
-  if (live && live.length > 0) return live;
-  if (provider.models && provider.models.length > 0) return provider.models;
-  if (provider.bundledModels && provider.bundledModels.length > 0) return provider.bundledModels;
-  return undefined;
+  let models: string[] | undefined;
+  if (live && live.length > 0) models = live;
+  else if (provider.models && provider.models.length > 0) models = provider.models;
+  else if (provider.bundledModels && provider.bundledModels.length > 0) models = provider.bundledModels;
+  return models ? [...models].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })) : undefined;
 }
 
 /** Free-text model id validation (permissive: lowercase alnum + - . : /). */

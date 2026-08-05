@@ -36,14 +36,20 @@ describe('getCached / setCached', () => {
 
   it('returns the stored polish for a fresh entry and touches its LRU time', () => {
     const map: PolishCache = {};
-    setCached(map, 'original text', 'polished text', 1000);
-    expect(getCached(map, 'original text', 2000)).toBe('polished text');
+    setCached(map, 'original text', 'polished text', undefined, 1000);
+    expect(getCached(map, 'original text', 2000)).toMatchObject({ polished: 'polished text' });
     expect(map['original text']!.ts).toBe(2000);
+  });
+
+  it('stores the confidence score alongside the polish', () => {
+    const map: PolishCache = {};
+    setCached(map, 'original text', 'polished text', 87);
+    expect(getCached(map, 'original text')?.confidence).toBe(87);
   });
 
   it('treats an expired entry as a miss', () => {
     const map: PolishCache = {};
-    setCached(map, 'original text', 'polished text', 1000);
+    setCached(map, 'original text', 'polished text', undefined, 1000);
     expect(getCached(map, 'original text', 1000 + CACHE_TTL_MS)).toBeUndefined();
   });
 

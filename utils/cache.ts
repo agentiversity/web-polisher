@@ -14,6 +14,8 @@ import { CACHE_KEY, CACHE_MAX_ENTRIES, CACHE_TTL_MS } from './settings';
 export interface CacheRecord {
   polished: string;
   ts: number;
+  /** Quality-gate confidence score (0–100) captured when the result was stored. */
+  confidence?: number;
 }
 
 export type PolishCache = Record<string, CacheRecord>;
@@ -57,14 +59,14 @@ export async function saveCache(map: PolishCache): Promise<void> {
 }
 
 /** Cached polished text for `text` if present and unexpired; bumps its LRU time. */
-export function getCached(map: PolishCache, text: string, now: number = Date.now()): string | undefined {
+export function getCached(map: PolishCache, text: string, now: number = Date.now()): CacheRecord | undefined {
   const rec = map[text];
   if (!rec || typeof rec.polished !== 'string' || now - rec.ts >= CACHE_TTL_MS) return undefined;
   rec.ts = now; // touch for LRU ordering (persisted on the next saveCache)
-  return rec.polished;
+  return rec;
 }
 
 /** Store a polished result for `text`. */
-export function setCached(map: PolishCache, text: string, polished: string, now: number = Date.now()): void {
-  map[text] = { polished, ts: now };
+export function setCached(map: PolishCache, text: string, polished: string, confidence?: number, now: number = Date.now()): void {
+  map[text] = { polished, ts: now, confidence };
 }
