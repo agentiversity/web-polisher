@@ -155,6 +155,28 @@ describe('PolishPipeline', () => {
     expect(document.querySelector('[data-id="d"]')?.textContent).toContain('P::brand');
   });
 
+  it('defers mutation re-detection while the user is scrolling', async () => {
+    body();
+    setupRects({ a: { top: 0, bottom: 100 } });
+    await startPolish('example.com');
+
+    window.dispatchEvent(new Event('scroll')); // scroll-pause window opens
+    const el = document.createElement('article');
+    el.dataset.id = 'd';
+    el.innerHTML = '<p>brand new comment added during scroll that is long enough</p>';
+    document.body.appendChild(el);
+
+    // Within the scroll-pause window the new node must not be detected.
+    await tick(60);
+    expect(document.querySelector('[data-id="d"]')?.hasAttribute(PROCESSED_ATTR)).toBe(false);
+
+    // Once the scroll settles, the debounced scan picks it up.
+    await vi.waitFor(
+      () => expect(document.querySelector('[data-id="d"]')?.hasAttribute(PROCESSED_ATTR)).toBe(true),
+      { timeout: 3000 },
+    );
+  });
+
   it('falls back to a single full pass when IntersectionObserver is unavailable', async () => {
     delete (globalThis as Record<string, unknown>).IntersectionObserver;
     body();

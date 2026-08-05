@@ -75,3 +75,6 @@ export const VIEWPORT_MARGIN_PX = 200;
 
 /** Quiet window after the last scroll during which DOM writes are deferred. */
 export const SCROLL_PAUSE_MS = 200;
+
+/** Debounce for MutationObserver-triggered re-detection of new content roots. */
+export const MUTATION_SCAN_DELAY_MS = 250;

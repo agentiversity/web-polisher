@@ -14,7 +14,7 @@
 import { findUserContentRoots } from './contentDetector';
 import { polishRoots, type PolishResult } from './polish';
 import { PROCESSED_ATTR } from './textReplacer';
-import { MIN_TEXT_LENGTH, SCROLL_PAUSE_MS, VIEWPORT_MARGIN_PX } from './settings';
+import { MIN_TEXT_LENGTH, MUTATION_SCAN_DELAY_MS, SCROLL_PAUSE_MS, VIEWPORT_MARGIN_PX } from './settings';
 
 const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false };
 
@@ -109,17 +109,37 @@ export class PolishPipeline {
 
     const mo = new MutationObserver((records) => {
       for (const rec of records) {
-        for (const node of rec.addedNodes) this.pendingNodes.add(node);
+        for (const node of rec.addedNodes) {
+          if (!node.isConnected) continue;
+          // Cheap ancestor walk (no layout reads): skip anything added inside
+          // already-processed content — including our own rewrite spans — so
+          // churny pages don't accumulate scan work.
+          const el = node instanceof Element ? node : node.parentElement;
+          if (el && el.closest(`[${PROCESSED_ATTR}]`)) continue;
+          this.pendingNodes.add(node);
+        }
       }
-      if (this.mutationTimer === null) {
-        this.mutationTimer = setTimeout(() => {
-          this.mutationTimer = null;
-          this.scanForNewRoots();
-        }, 0);
-      }
+      this.scheduleScan();
     });
     mo.observe(document.body, { childList: true, subtree: true });
     this.mo = mo;
+  }
+
+  /** Debounced re-detection pass; deferred while the user is actively scrolling. */
+  private scheduleScan(): void {
+    if (this.mutationTimer !== null || this.stopped) return;
+    this.mutationTimer = setTimeout(() => {
+      this.mutationTimer = null;
+      if (this.stopped) return;
+      // Detection reads layout (getBoundingClientRect/getComputedStyle), which
+      // causes scroll jank, so defer it until the user stops scrolling. The
+      // debounce plus the observer-side pre-filter keeps idle CPU near zero.
+      if (this.scrollPaused) {
+        this.scheduleScan();
+        return;
+      }
+      this.scanForNewRoots();
+    }, MUTATION_SCAN_DELAY_MS);
   }
 
   /** Debounced scan of added subtrees for new user-content roots. */
