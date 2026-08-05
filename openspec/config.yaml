@@ -3,14 +3,15 @@ schema: spec-driven
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 context: |
-  Product: "Text Polisher" — a Firefox extension that passively transforms the
-  user-generated English text users READ (comments, posts) into natural,
-  native-sounding English. Invisible and zero-interaction is the core value.
+  Product: "Text Polisher" — a Firefox extension that transforms user-generated
+  English text (comments, posts) into natural, native-sounding English, on demand.
 
   Tech stack:
-  - Firefox WebExtensions (MV3) built with WXT 0.20.27 + TypeScript 5.x + Vite.
-  - Cloud LLM: Gemini Flash via @google/generative-ai. All API calls route through
-    the background service worker (content scripts cannot do cross-origin fetches in MV3).
+  - Firefox WebExtensions (MV3) built with WXT 0.21.3 + TypeScript 5.x + Vite.
+  - Cloud LLM: any OpenAI-, Anthropic-, or Gemini-compatible provider (Gemini via
+    @google/generative-ai, OpenAI/Anthropic via raw fetch). All API calls route
+    through the background service worker (content scripts cannot do cross-origin
+    fetches in MV3).
   - Storage: browser.storage.local for settings, user API keys, and an LRU cache
     (1000 entries, 7-day TTL).
   - DOM: native APIs only (TreeWalker, MutationObserver, IntersectionObserver).
@@ -33,12 +34,13 @@ context: |
   - Firefox is the target platform.
 
   NOTE: this reverses the original "passive & invisible, zero-interaction"
-  positioning. See openspec/changes/explicit-apply-button/ (and FEATURES.md
-  anti-features) for the rationale: always-on auto-transformation wastes
-  cloud-LLM budget on already-polished text.
+  positioning. See openspec/changes/archive/2026-08-02-explicit-apply-button/
+  (and FEATURES.md anti-features) for the rationale: always-on auto-transformation
+  wastes cloud-LLM budget on already-polished text.
 
   Planning/spec home is OpenSpec (openspec/). The historical GSD planning docs
   (.planning: PROJECT/REQUIREMENTS/ROADMAP/STATE) were removed; the research that
   informed them is preserved in docs/research/. OpenSpec specs in openspec/specs/
-  cover the capabilities: content-detection, transformation-engine,
-  quality-and-confidence, performance, user-experience.
+  cover the capabilities: text-replacement, user-actions, content-detection,
+  transformation-engine, quality-and-confidence, settings, user-experience,
+  performance.
