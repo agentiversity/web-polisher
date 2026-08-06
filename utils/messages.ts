@@ -22,6 +22,16 @@ export interface PolisherStatusMessage {
   status: 'idle' | 'running' | 'paused' | 'done';
 }
 
+export interface GetPolisherStatusMessage {
+  type: 'get-polisher-status';
+  tabId: number;
+}
+
+export interface PolisherStatusReply {
+  type: 'polisher-status-reply';
+  status: 'idle' | 'running' | 'paused' | 'done';
+}
+
 export interface TransformTextMessage {
   type: 'transform-text';
   texts: string[];
@@ -59,6 +69,7 @@ export interface ApplyPolishResponse {
 export type BackgroundMessage =
   | PingMessage
   | PolisherStatusMessage
+  | GetPolisherStatusMessage
   | TransformTextMessage
   | SetTestKeyMessage;
 
@@ -70,6 +81,10 @@ export function isPingMessage(msg: unknown): msg is PingMessage {
 
 export function isPolisherStatusMessage(msg: unknown): msg is PolisherStatusMessage {
   return isObject(msg) && msg.type === 'polisher-status' && typeof msg.status === 'string';
+}
+
+export function isGetPolisherStatusMessage(msg: unknown): msg is GetPolisherStatusMessage {
+  return isObject(msg) && msg.type === 'get-polisher-status' && typeof msg.tabId === 'number';
 }
 
 export function isTransformTextMessage(msg: unknown): msg is TransformTextMessage {

@@ -1,37 +1,59 @@
 /**
- * Action popup (action-button-popup).
+ * Action popup (action-button-popup, slimmed).
  *
- * Opens when the user clicks the toolbar action button (WXT wires the popup as
- * `action.default_popup`). Top: a large, central, icon-only "Polish Page"
- * button (tooltip via `title`). Below: the shared provider/model/API-key config
- * form (`utils/configForm.ts`), so the user can adjust configuration right
- * before polishing. Clicking "Polish Page" sends the existing `apply-polish`
- * message to the active tab and closes the popup.
+ * Quick-action surface only: a large Polish button (start/pause/resume via the
+ * existing apply-polish message), the current lifecycle status (from the
+ * background's per-tab map, live-updated while the popup is open), and a link
+ * to the options page. Configuration lives in the options page.
  */
 import { browser } from 'wxt/browser';
-import { initConfigForm, type ConfigFormHandles } from '../../utils/configForm';
 import type { ApplyPolishMessage } from '../../utils/messages';
 
-/** Wire the popup. `doc`/`storage` injectable for jsdom tests. */
-export async function initPopup(doc: Document, storage = browser.storage.local): Promise<void> {
-  const el = <T extends HTMLElement>(id: string) => doc.getElementById(id) as T;
-  const handles: ConfigFormHandles = {
-    form: el('settings-form'),
-    provider: el('provider'),
-    customFields: el('custom-fields'),
-    customName: el('custom-name'),
-    customUrl: el('custom-url'),
-    customCompat: el('custom-compat'),
-    modelSelect: el('model-select'),
-    modelInput: el('model-input'),
-    apiKey: el('api-key'),
-    status: el('status'),
-    threshold: el<HTMLInputElement>('confidence-threshold'),
-    clearBtn: el<HTMLButtonElement>('clear'),
-  };
-  await initConfigForm(handles, storage);
+const STATUS_LABEL: Record<string, string> = {
+  idle: 'Idle',
+  running: 'Polishing…',
+  paused: 'Paused',
+  done: 'Done',
+};
 
-  el<HTMLButtonElement>('polish').addEventListener('click', () => {
+/** Wire the popup. `doc` injectable for jsdom tests. */
+export async function initPopup(doc: Document): Promise<void> {
+  const el = <T extends HTMLElement>(id: string) => doc.getElementById(id) as T;
+  const polish = el<HTMLButtonElement>('polish');
+  const statusEl = el<HTMLElement>('status');
+  const settingsBtn = el<HTMLButtonElement>('settings');
+
+  const setStatus = (status: string): void => {
+    statusEl.textContent = STATUS_LABEL[status] ?? status;
+    statusEl.className = `status status-${status}`;
+  };
+
+  // Initial status: ask the background for the active tab's map entry.
+  try {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id != null) {
+      const reply: unknown = await browser.runtime.sendMessage({ type: 'get-polisher-status', tabId: tab.id });
+      if (reply && typeof reply === 'object' && (reply as { type?: string }).type === 'polisher-status-reply') {
+        const status = (reply as { status?: string }).status;
+        if (status) setStatus(status);
+      }
+    }
+  } catch {
+    // Background still waking up — keep the default Idle status.
+  }
+
+  // Live updates while the popup is open: the content script broadcasts
+  // polisher-status via runtime.sendMessage, which reaches the popup too.
+  browser.runtime.onMessage.addListener((message: unknown) => {
+    if (message && typeof message === 'object' && (message as { type?: string }).type === 'polisher-status') {
+      const status = (message as { status?: string }).status;
+      if (status) setStatus(status);
+    }
+  });
+
+  settingsBtn.addEventListener('click', () => void browser.runtime.openOptionsPage());
+
+  polish.addEventListener('click', () => {
     // Fire-and-forget and close immediately: polishing continues in the tab and
     // the toolbar icon reflects its progress. A missing content script is a
     // graceful no-op.
@@ -46,6 +68,6 @@ export async function initPopup(doc: Document, storage = browser.storage.local):
 }
 
 // Top-level wiring (extension popup); initPopup is exported for tests.
-if (typeof document !== 'undefined' && document.getElementById('settings-form')) {
+if (typeof document !== 'undefined' && document.getElementById('polish')) {
   void initPopup(document);
 }

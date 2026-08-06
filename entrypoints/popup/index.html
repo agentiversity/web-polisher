@@ -13,49 +13,9 @@
         <img src="/icon/128.png" alt="Polish Page" />
       </button>
 
-      <form id="settings-form" autocomplete="off">
-        <label for="provider">Provider</label>
-        <select id="provider"></select>
+      <p id="status" class="status" role="status" aria-live="polite">Idle</p>
 
-        <div id="custom-fields" hidden>
-          <label for="custom-name">Provider name</label>
-          <input id="custom-name" type="text" spellcheck="false" placeholder="My Gateway" />
-
-          <label for="custom-url">Base URL</label>
-          <input id="custom-url" type="url" spellcheck="false" placeholder="https://gateway.example.com/v1" />
-
-          <label for="custom-compat">API compatibility</label>
-          <select id="custom-compat">
-            <option value="openai">OpenAI-compatible</option>
-            <option value="anthropic">Anthropic-compatible</option>
-            <option value="gemini">Gemini-compatible</option>
-          </select>
-        </div>
-
-        <label for="model">Model</label>
-        <select id="model-select" hidden></select>
-        <input id="model-input" type="text" spellcheck="false" hidden placeholder="model-id (e.g. my-model-2b)" />
-
-        <label for="api-key">API key</label>
-        <input id="api-key" type="password" spellcheck="false" placeholder="Paste your provider API key" />
-
-        <label for="confidence-threshold">Confidence threshold</label>
-        <input
-          id="confidence-threshold"
-          type="number"
-          min="0"
-          max="90"
-          step="1"
-          inputmode="numeric"
-          title="A rewrite is only applied when its similarity to the original scores at least this value. Set it low to have more text rewritten; raise it to be more conservative — the higher you set it, the more text stays exactly as it was. Default: 50. Range: 0–90."
-        />
-
-        <div class="actions">
-          <button type="submit" class="primary">Save</button>
-          <button type="button" id="clear">Clear</button>
-        </div>
-        <p id="status" role="status" class="status" aria-live="polite"></p>
-      </form>
+      <button id="settings" class="settings" type="button">Settings</button>
     </main>
     <script type="module" src="./index.ts"></script>
   </body>

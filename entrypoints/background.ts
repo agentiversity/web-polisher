@@ -4,12 +4,14 @@ import { transform, getLlmConfig } from '../utils/llmClient';
 import { DEFAULT_GEMINI_MODEL, LLM_CONFIG_KEY, type LlmConfig } from '../utils/settings';
 import type { PipelineStatus } from '../utils/pipeline';
 import {
+  isGetPolisherStatusMessage,
   isPingMessage,
   isPolisherStatusMessage,
   isTransformTextMessage,
   isSetTestKeyMessage,
   type ApplyPolishResponse,
   type PingResponse,
+  type PolisherStatusReply,
   type SetTestKeyResponse,
   type TransformTextReply,
 } from '../utils/messages';
@@ -53,6 +55,15 @@ export default defineBackground(() => {
       if (isPolisherStatusMessage(message) && sender.tab?.id != null) {
         statusByTab.set(sender.tab.id, message.status as PipelineStatus);
         setIconForTab(sender.tab.id);
+        return;
+      }
+
+      // Popup asks for the active tab's status on open.
+      if (isGetPolisherStatusMessage(message)) {
+        sendResponse({
+          type: 'polisher-status-reply',
+          status: statusByTab.get(message.tabId) ?? 'idle',
+        } satisfies PolisherStatusReply);
         return;
       }
 
