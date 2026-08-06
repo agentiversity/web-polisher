@@ -1,6 +1,7 @@
 // Regenerate the add-on's toolbar/listing icons as PNGs (pure Node, no deps).
-// Design: rounded badge, three white text lines, sparkle. A color theme per
-// status (gray=not started, blue=in progress, amber=paused, green=complete).
+// Design: rounded badge with a diagonal white pen nib and a sparkle. A color
+// theme per status (gray=not started, blue=in progress, amber=paused,
+// green=complete).
 // Run: node scripts/generate-icons.mjs
 import { deflateSync } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -65,14 +66,42 @@ const BARS = [
 ];
 const BAR_R = (BARS[0][3] - BARS[0][1]) / 2; // 0.0425
 
+// Diagonal pen (normalized): body center, local half-length/half-width, corner
+// radius, nib reach. The pen points down-right at 45°.
+const PEN = { cx: 0.52, cy: 0.56, L: 0.30, W: 0.095, r: 0.035, nib: 0.17 };
+
 const BADGE = [0.02, 0.02, 0.98, 0.98, 0.18];
-const SPARK = [0.79, 0.24, 0.16, 0.05]; // cx, cy, outer R, inner r
+const SPARK = [0.24, 0.30, 0.15, 0.045]; // cx, cy, outer R, inner r
 
 function insideRoundedRect(px, py, x0, y0, x1, y1, r) {
   if (px < x0 || px > x1 || py < y0 || py > y1) return false;
   const cx = px < x0 + r ? x0 + r : px > x1 - r ? x1 - r : px;
   const cy = py < y0 + r ? y0 + r : py > y1 - r ? y1 - r : py;
   return (px - cx) ** 2 + (py - cy) ** 2 <= r * r;
+}
+
+/** Project a screen point into the pen's local frame (rotated -45°). */
+function toPenLocal(px, py) {
+  const dx = px - PEN.cx;
+  const dy = py - PEN.cy;
+  const c = Math.SQRT1_2;
+  return [dx * c + dy * c, -dx * c + dy * c];
+}
+
+/** Point-in-triangle test (pen nib). */
+function insideTri(px, py, x0, y0, x1, y1, x2, y2) {
+  const d1 = (px - x1) * (y0 - y1) - (x0 - x1) * (py - y1);
+  const d2 = (px - x2) * (y1 - y2) - (x1 - x2) * (py - y2);
+  const d3 = (px - x0) * (y2 - y0) - (x2 - x0) * (py - y0);
+  const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+  const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(hasNeg && hasPos);
+}
+
+function insidePen(px, py) {
+  const [lx, ly] = toPenLocal(px, py);
+  if (insideRoundedRect(lx, ly, -PEN.L, -PEN.W, PEN.L, PEN.W, PEN.r)) return true;
+  return insideTri(lx, ly, PEN.L, -PEN.W, PEN.L + PEN.nib, 0, PEN.L, PEN.W);
 }
 
 function insideStar(px, py, cx, cy, R, r) {
@@ -114,12 +143,9 @@ function renderIcon(size, [bgTop, bgBot, spark]) {
         r = g = b = a = 0;
       }
       if (a > 0) {
-        for (const bar of BARS) {
-          if (insideRoundedRect(nx, ny, bar[0], bar[1], bar[2], bar[3], BAR_R)) {
-            [r, g, b] = C_TEXT;
-            a = 0.95;
-            break;
-          }
+        if (insidePen(nx, ny)) {
+          [r, g, b] = C_TEXT;
+          a = 1;
         }
         if (insideStar(nx, ny, ...SPARK)) {
           [r, g, b] = spark;
