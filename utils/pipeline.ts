@@ -12,8 +12,7 @@
  * back to a single full pass, matching the pre-Phase-4 behavior.
  */
 import { findUserContentRoots } from './contentDetector';
-import { polishRoots, type PolishResult } from './polish';
-import { PROCESSED_ATTR } from './textReplacer';
+import { polishRoots, PROCESSED_ATTR, type PolishResult } from './polish';
 import { MIN_TEXT_LENGTH, MUTATION_SCAN_BACKOFF_MAX_MS, MUTATION_SCAN_DELAY_MS, SCROLL_PAUSE_MS, VIEWPORT_MARGIN_PX } from './settings';
 
 const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false };

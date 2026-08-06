@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { polishContent, polishRoot, collectEligibleTextNodes, isMeaningfullyChanged, PENDING_CLASS } from './polish';
-import { PROCESSED_ATTR, markProcessed } from './textReplacer';
+import { polishContent, polishRoot, collectEligibleTextNodes, isMeaningfullyChanged, PENDING_CLASS, PROCESSED_ATTR, markProcessed } from './polish';
 import { MIN_TEXT_LENGTH } from './settings';
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -47,6 +46,19 @@ describe('collectEligibleTextNodes', () => {
   it('excludes text in UI/interactive containers even at length', () => {
     document.body.innerHTML =
       '<article><button>Post Comment Now Button</button><p>real comment body text here</p></article>';
+    const root = document.querySelector('article') as HTMLElement;
+    const nodes = collectEligibleTextNodes(root);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]!.textContent).toBe('real comment body text here');
+  });
+
+  it('never collects text inside non-rendered containers (script/style/noscript)', () => {
+    document.body.innerHTML =
+      '<article>' +
+      '<script>const longNonUserText = "nested helper text that is long enough here";</script>' +
+      '<style>.longNonUserText{font-family:"not really user content anyway"}</style>' +
+      '<noscript>this fallback text is long enough to count but must not be collected</noscript>' +
+      '<p>real comment body text here</p></article>';
     const root = document.querySelector('article') as HTMLElement;
     const nodes = collectEligibleTextNodes(root);
     expect(nodes).toHaveLength(1);

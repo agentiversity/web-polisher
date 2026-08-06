@@ -12,12 +12,19 @@
  * - On any failure / no-op it keeps the original text.
  */
 import { browser } from 'wxt/browser';
-import { findUserContentRoots } from './contentDetector';
-import { walkTextNodesIncludingShadow, isVisible } from './domWalk';
-import { isUiElement, markProcessed, PROCESSED_ATTR } from './textReplacer';
+import { findUserContentRoots, getSiteProfile, isExcluded, type SiteProfile } from './contentDetector';
+import { walkTextNodesIncludingShadow } from './domWalk';
 import { MIN_TEXT_LENGTH, MAX_TEXT_LENGTH, BATCH_SIZE } from './settings';
 import type { TransformResult } from './llmClient';
 import type { TransformTextMessage, TransformTextReply } from './messages';
+
+/** In-DOM marker used to skip already-processed containers (idempotency). */
+export const PROCESSED_ATTR = 'data-text-polished';
+
+/** Mark a container as processed so later passes skip it. */
+export function markProcessed(el: Element): void {
+  el.setAttribute(PROCESSED_ATTR, 'true');
+}
 
 export interface PolishResult {
   /** Number of eligible text nodes collected. */
@@ -40,11 +47,13 @@ export interface PolishRootResult {
 }
 
 /**
- * Collect the eligible text nodes under a detected user-content root: visible,
- * non-UI, above the minimum length, and not inside an already-processed parent.
+ * Collect the eligible text nodes under a detected user-content root: not
+ * excluded by the shared content-detection gate (visible, non-interactive,
+ * non-ad), above the minimum length, and not inside an already-processed parent.
  */
 export function collectEligibleTextNodes(
   root: ParentNode,
+  profile?: SiteProfile,
   minLength: number = MIN_TEXT_LENGTH,
 ): Text[] {
   const nodes: Text[] = [];
@@ -52,8 +61,7 @@ export function collectEligibleTextNodes(
     const parent = node.parentElement;
     if (!parent) continue;
     if (parent.hasAttribute(PROCESSED_ATTR)) continue;
-    if (isUiElement(parent)) continue;
-    if (!isVisible(parent)) continue;
+    if (isExcluded(parent, profile)) continue;
     const text = node.textContent ?? '';
     const trimmed = text.trim();
     if (!trimmed) continue;
@@ -156,11 +164,12 @@ async function sendTransformBatch(texts: string[]): Promise<TransformTextReply |
  */
 export async function polishRoots(roots: Element[], hostname: string): Promise<PolishResult> {
   const blocks = roots.length;
+  const profile = getSiteProfile(hostname);
   const groups: { root: Element; nodes: Text[] }[] = [];
   for (const root of roots) {
     // Idempotency: skip a root already processed on an earlier pass.
     if (root.hasAttribute(PROCESSED_ATTR)) continue;
-    const nodes = collectEligibleTextNodes(root);
+    const nodes = collectEligibleTextNodes(root, profile);
     if (nodes.length === 0) continue;
     groups.push({ root, nodes });
   }

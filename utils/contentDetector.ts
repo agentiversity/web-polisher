@@ -9,8 +9,9 @@
  * Detection pierces shadow DOM (see domWalk.ts) so WebComponents-heavy sites like
  * www.reddit.com (shreddit-*) expose their real content roots.
  *
- * This replaces the Phase-1 `isUiElement` stopgap as the primary gate. The replacer
- * in `utils/textReplacer.ts` keeps its own basic guard as a secondary safety net.
+ * This replaces the Phase-1 `isUiElement` stopgap as the primary gate; its
+ * exclusion sets were folded in here so detection and collection share one
+ * heuristic.
  */
 
 import { containsIncludingShadow, closestIncludingShadow, walkElementsIncludingShadow, isVisible } from './domWalk';
@@ -99,12 +100,16 @@ const INTERACTIVE_TAGS = new Set([
   'a', 'button', 'input', 'textarea', 'select', 'label', 'option', 'iframe', 'object',
   'embed', 'svg', 'canvas', 'video', 'audio', 'nav', 'header', 'footer', 'aside',
   'form', 'menu', 'summary', 'dialog',
+  // Non-rendered / embedded-content containers (folded in from the Phase-1
+  // guard): their text must never be collected even when a style walker can't
+  // see them as hidden (jsdom resolves script/style display to '').
+  'script', 'style', 'noscript', 'template',
 ]);
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'navigation', 'banner', 'dialog', 'alertdialog', 'menu', 'menuitem',
   'tab', 'toolbar', 'search', 'combobox', 'textbox', 'checkbox', 'radio', 'switch',
-  'listbox', 'option', 'complementary', 'contentinfo',
+  'listbox', 'option', 'complementary', 'contentinfo', 'presentation',
 ]);
 
 /** Minimum text length for the heuristic to consider an unknown element user content. */

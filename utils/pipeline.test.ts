@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { startPolish, stopPolish, pausePolish, resumePolish, PolishPipeline } from './pipeline';
 import { findUserContentRoots } from './contentDetector';
-import { PROCESSED_ATTR } from './textReplacer';
+import { PROCESSED_ATTR } from './polish';
 import { MUTATION_SCAN_DELAY_MS, MUTATION_SCAN_BACKOFF_MAX_MS } from './settings';
 
 const mocks = vi.hoisted(() => ({ sendMessage: vi.fn() }));

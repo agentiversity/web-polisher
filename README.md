@@ -71,7 +71,7 @@ Then in Firefox: `about:debugging` → **This Firefox** → **Load Temporary Add
 ## What it does today
 
 - A background service worker and content script skeleton with message passing (content ↔ background); all Gemini API traffic routes through the background (MV3 CORS).
-- A **React/Vue-safe text replacer** (`utils/textReplacer.ts`) that walks the DOM with `TreeWalker`, editing **text nodes only** — never whole elements — so React's fiber tree stays intact on sites like Facebook and Reddit.
+- A **content-side apply step** (`utils/polish.ts`): walks each detected root's text nodes (`TreeWalker`), edits **text nodes only** — never whole elements — so React's fiber tree stays intact on sites like Facebook and Reddit.
 - A **click-to-apply action button** that sends an `apply-polish` message from the background to the active tab.
 - A **content detector** (`utils/contentDetector.ts` + `utils/domWalk.ts`) that, on trigger, collects top-most user-content roots (site-specific or heuristic) and skips UI, nav, ads, buttons, non-`<button>` interactive wrappers, and hidden/screen-reader text. It pierces shadow DOM, so it works with Reddit's `shreddit-*` custom elements.
 - A **shadow-DOM-aware walker** (`utils/domWalk.ts`) for detection, replacement, and visibility filtering.
@@ -96,9 +96,7 @@ utils/
   contentDetector.test.ts
   domWalk.ts           Shadow-DOM-aware traversal + visibility filtering
   domWalk.test.ts
-  textReplacer.ts      TreeWalker text-node replacement + UI-element exclusion guard
-  textReplacer.test.ts
-  polish.ts            Content-side orchestration: detect → batch → transform-text → apply
+  polish.ts            Content-side orchestration: detect → batch → transform-text → apply (owns PROCESSED_ATTR idempotency)
   polish.test.ts
   pipeline.ts          Lazy viewport-gated pipeline (IntersectionObserver, MutationObserver, scroll-pause)
   pipeline.test.ts
