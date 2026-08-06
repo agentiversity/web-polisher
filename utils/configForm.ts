@@ -22,7 +22,7 @@ import {
   getProviderModels,
   type ProviderDef,
 } from './providers';
-import { buildConfig, normalizeThreshold, providerOptions } from './optionsModel';
+import { buildConfig, normalizeThreshold, providerOptions, type ConfigErrors } from './optionsModel';
 import { buildDefaults, type BuildDefaults } from './buildDefaults';
 
 /** DOM handles the shared controller operates on. */
@@ -39,14 +39,18 @@ export interface ConfigFormHandles {
   status: HTMLElement;
   /** Options page only: confidence threshold input. */
   threshold?: HTMLInputElement;
+  /** Options page only: live threshold value readout. */
+  thresholdValue?: HTMLElement;
+  /** Options page only: API-key show/hide toggle. */
+  apiKeyToggle?: HTMLButtonElement;
   clearBtn?: HTMLButtonElement;
   refreshProvidersBtn?: HTMLButtonElement;
   refreshModelsBtn?: HTMLButtonElement;
 }
 
 export interface ConfigFormController {
-  /** Build a validated config from the current form state; `{ error }` when invalid. */
-  collect(): LlmConfig | { error: string };
+  /** Build a validated config from the current form state; `{ errors }` when invalid. */
+  collect(): LlmConfig | { errors: ConfigErrors };
   /** Validate and persist the form (llm:config + optional threshold); true on success. */
   save(): Promise<boolean>;
   /** Remove the stored config and reset the form. */
@@ -61,6 +65,53 @@ export interface ConfigFormController {
 export function setStatus(el: HTMLElement, message: string, kind: 'ok' | 'err' | '' = ''): void {
   el.textContent = message;
   el.className = `status ${kind}`;
+}
+
+const ERROR_SLOT = (slot: string) => `[data-error-for="${slot}"]`;
+
+/** DOM id of the input each validation field maps to. */
+const FIELD_INPUT_ID: Record<keyof ConfigErrors, string> = {
+  provider: 'provider',
+  customName: 'custom-name',
+  customUrl: 'custom-url',
+  model: 'model-input',
+  apiKey: 'api-key',
+};
+
+/** data-error-for value of the error slot for each validation field. */
+const FIELD_SLOT_ID: Record<keyof ConfigErrors, string> = {
+  provider: 'provider',
+  customName: 'custom-name',
+  customUrl: 'custom-url',
+  model: 'model',
+  apiKey: 'api-key',
+};
+
+/** Render per-field validation errors under their inputs; clears all first. */
+function renderFieldErrors(form: HTMLFormElement, errors: ConfigErrors): void {
+  for (const field of Object.keys(FIELD_INPUT_ID) as (keyof ConfigErrors)[]) {
+    const slot = form.querySelector<HTMLElement>(ERROR_SLOT(FIELD_SLOT_ID[field]));
+    if (!slot) continue;
+    const msg = errors[field];
+    slot.textContent = msg ?? '';
+    slot.hidden = msg == null;
+    const input = field === 'model'
+      ? form.querySelector<HTMLInputElement>('#model-input, #model-select')
+      : form.querySelector<HTMLInputElement>(`#${FIELD_INPUT_ID[field]}`);
+    if (input) {
+      if (msg) input.setAttribute('aria-invalid', 'true');
+      else input.removeAttribute('aria-invalid');
+    }
+  }
+}
+
+function clearFieldErrors(form: HTMLFormElement): void {
+  renderFieldErrors(form, {});
+}
+
+/** Sync the live threshold readout to the slider's current value. */
+function syncThresholdValue(threshold: HTMLInputElement, readout?: HTMLElement): void {
+  if (readout) readout.textContent = threshold.value;
 }
 
 function fillSelect(select: HTMLSelectElement, options: { value: string; label: string }[], selected?: string): void {
@@ -137,7 +188,7 @@ export async function initConfigForm(
     void updateModelControl();
   }
 
-  function collect(): LlmConfig | { error: string } {
+  function collect(): LlmConfig | { errors: ConfigErrors } {
     return buildConfig({
       providerId: h.provider.value,
       customName: h.customName.value,
@@ -152,10 +203,12 @@ export async function initConfigForm(
 
   async function save(): Promise<boolean> {
     const cfg = collect();
-    if ('error' in cfg) {
-      setStatus(h.status, cfg.error, 'err');
+    if ('errors' in cfg) {
+      renderFieldErrors(h.form, cfg.errors);
+      setStatus(h.status, 'Fix the highlighted fields.', 'err');
       return false;
     }
+    clearFieldErrors(h.form);
     try {
       const payload: Record<string, unknown> = { [LLM_CONFIG_KEY]: cfg };
       if (h.threshold) payload[CONFIDENCE_THRESHOLD_KEY] = normalizeThreshold(Number(h.threshold.value));
@@ -174,7 +227,11 @@ export async function initConfigForm(
     h.modelInput.value = '';
     h.modelSelect.replaceChildren();
     h.apiKey.value = '';
-    if (h.threshold) h.threshold.value = String(normalizeThreshold(NaN));
+    if (h.threshold) {
+      h.threshold.value = String(normalizeThreshold(NaN));
+      syncThresholdValue(h.threshold, h.thresholdValue);
+    }
+    clearFieldErrors(h.form);
     modelMode = 'text';
     void updateModelControl();
   }
@@ -211,6 +268,7 @@ export async function initConfigForm(
         const threshold = got[CONFIDENCE_THRESHOLD_KEY];
         const thresholdNumber = typeof threshold === 'number' ? threshold : Number(threshold);
         h.threshold.value = String(normalizeThreshold(Number.isFinite(thresholdNumber) ? thresholdNumber : NaN));
+        syncThresholdValue(h.threshold, h.thresholdValue);
       }
       cfg = got[LLM_CONFIG_KEY] as Partial<LlmConfig> | undefined;
     } catch {
@@ -266,7 +324,10 @@ export async function initConfigForm(
       h.customFields.hidden = false;
     }
     h.apiKey.value = d.config.apiKey;
-    if (h.threshold) h.threshold.value = String(d.confidenceThreshold);
+    if (h.threshold) {
+      h.threshold.value = String(d.confidenceThreshold);
+      syncThresholdValue(h.threshold, h.thresholdValue);
+    }
     await updateModelControl();
     if (modelMode === 'dropdown') {
       const list = [...h.modelSelect.options].map((o) => o.value);
@@ -297,6 +358,16 @@ export async function initConfigForm(
   if (h.refreshModelsBtn) h.refreshModelsBtn.addEventListener('click', () => void refreshModels());
   h.provider.addEventListener('change', () => onProviderChange());
   h.customCompat.addEventListener('change', () => void updateModelControl());
+  if (h.threshold) h.threshold.addEventListener('input', () => syncThresholdValue(h.threshold!, h.thresholdValue));
+  if (h.apiKeyToggle && h.apiKey) {
+    h.apiKeyToggle.addEventListener('click', () => {
+      const showing = h.apiKey!.type === 'text';
+      h.apiKey!.type = showing ? 'password' : 'text';
+      h.apiKeyToggle!.textContent = showing ? 'Show' : 'Hide';
+      h.apiKeyToggle!.setAttribute('aria-pressed', String(!showing));
+      h.apiKeyToggle!.title = showing ? 'Show API key' : 'Hide API key';
+    });
+  }
 
   providers = await fetchProviderIndex();
   renderProviders(h, providers);

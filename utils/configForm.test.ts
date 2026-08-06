@@ -36,9 +36,12 @@ const INDEX = {
 const HTML = `
 <form id="settings-form" autocomplete="off">
   <select id="provider"></select>
+  <p class="field-error" data-error-for="provider" hidden></p>
   <div id="custom-fields" hidden>
     <input id="custom-name" type="text" />
+    <p class="field-error" data-error-for="custom-name" hidden></p>
     <input id="custom-url" type="url" />
+    <p class="field-error" data-error-for="custom-url" hidden></p>
     <select id="custom-compat">
       <option value="openai">OpenAI-compatible</option>
       <option value="anthropic">Anthropic-compatible</option>
@@ -47,8 +50,12 @@ const HTML = `
   </div>
   <select id="model-select" hidden></select>
   <input id="model-input" type="text" hidden />
+  <p class="field-error" data-error-for="model" hidden></p>
   <input id="api-key" type="password" />
-  <input id="confidence-threshold" type="number" />
+  <button type="button" id="api-key-toggle">Show</button>
+  <p class="field-error" data-error-for="api-key" hidden></p>
+  <input id="confidence-threshold" type="range" min="0" max="90" step="1" />
+  <output id="threshold-value" for="confidence-threshold"></output>
   <button type="submit">Save</button>
   <button type="button" id="clear">Clear</button>
   <button type="button" id="refresh-providers">Refresh</button>
@@ -70,6 +77,8 @@ function setupHandles(withThreshold = true): ConfigFormHandles {
     modelInput: el('model-input'),
     apiKey: el('api-key'),
     status: el('status'),
+    apiKeyToggle: el<HTMLButtonElement>('api-key-toggle'),
+    thresholdValue: el<HTMLElement>('threshold-value'),
     clearBtn: el<HTMLButtonElement>('clear'),
     refreshProvidersBtn: el<HTMLButtonElement>('refresh-providers'),
     refreshModelsBtn: el<HTMLButtonElement>('refresh-models'),
@@ -138,7 +147,50 @@ describe('initConfigForm', () => {
     const h = setupHandles();
     const form = await initConfigForm(h, mocks as never);
     const cfg = form.collect();
-    expect(cfg).toHaveProperty('error');
+    expect(cfg).toHaveProperty('errors');
+  });
+
+  it('renders inline field errors on an invalid save', async () => {
+    const h = setupHandles();
+    const form = await initConfigForm(h, mocks as never);
+    expect(await form.save()).toBe(false);
+    const slot = h.form.querySelector('[data-error-for="api-key"]') as HTMLElement;
+    expect(slot.hidden).toBe(false);
+    expect(slot.textContent).toContain('Enter an API key');
+    expect(h.apiKey.getAttribute('aria-invalid')).toBe('true');
+    expect(h.status.textContent).toBe('Fix the highlighted fields.');
+  });
+
+  it('clears field errors after a successful save', async () => {
+    const h = setupHandles();
+    const form = await initConfigForm(h, mocks as never);
+    h.provider.value = 'google';
+    h.modelInput.value = 'gemini-2.5-flash';
+    h.apiKey.value = 'KEY';
+    expect(await form.save()).toBe(true);
+    const slot = h.form.querySelector('[data-error-for="api-key"]') as HTMLElement;
+    expect(slot.hidden).toBe(true);
+    expect(h.apiKey.getAttribute('aria-invalid')).toBeNull();
+  });
+
+  it('syncs the live threshold readout to the slider', async () => {
+    const h = setupHandles();
+    await initConfigForm(h, mocks as never);
+    h.threshold!.value = '35';
+    h.threshold!.dispatchEvent(new Event('input'));
+    expect(h.thresholdValue!.textContent).toBe('35');
+  });
+
+  it('toggles the API-key visibility on the eye button', async () => {
+    const h = setupHandles();
+    await initConfigForm(h, mocks as never);
+    expect(h.apiKey.type).toBe('password');
+    h.apiKeyToggle!.click();
+    expect(h.apiKey.type).toBe('text');
+    expect(h.apiKeyToggle!.textContent).toBe('Hide');
+    h.apiKeyToggle!.click();
+    expect(h.apiKey.type).toBe('password');
+    expect(h.apiKeyToggle!.textContent).toBe('Show');
   });
 
   it('save persists llm:config and the threshold', async () => {

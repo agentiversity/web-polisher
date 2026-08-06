@@ -29,19 +29,19 @@ describe('buildConfig', () => {
 
   it('requires an API key', () => {
     const cfg = buildConfig({ providerId: 'openai', model: 'gpt-4o-mini', modelFromList: true, apiKey: '', providers: PROVIDERS });
-    expect('error' in cfg).toBe(true);
+    expect('errors' in cfg).toBe(true);
   });
 
   it('rejects an unknown provider', () => {
     const cfg = buildConfig({ providerId: 'nope', model: 'x', modelFromList: false, apiKey: 'k', providers: PROVIDERS });
-    expect('error' in cfg).toBe(true);
+    expect('errors' in cfg).toBe(true);
   });
 
   it('validates free-text model ids but skips validation for list picks', () => {
     const bad = buildConfig({ providerId: 'openai', model: 'GPT-4o', modelFromList: false, apiKey: 'k', providers: PROVIDERS });
-    expect('error' in bad).toBe(true);
+    expect('errors' in bad).toBe(true);
     const listPick = buildConfig({ providerId: 'openai', model: 'gpt-4o-mini', modelFromList: true, apiKey: 'k', providers: PROVIDERS });
-    expect('error' in listPick).toBe(false);
+    expect('errors' in listPick).toBe(false);
   });
 
   it('builds a valid custom provider config and normalizes the URL', () => {
@@ -63,7 +63,7 @@ describe('buildConfig', () => {
       providerId: 'custom', customName: 'X', customUrl: 'http://remote.test/v1', customCompat: 'openai',
       model: 'm', modelFromList: false, apiKey: 'k', providers: PROVIDERS,
     });
-    expect('error' in cfg).toBe(true);
+    expect('errors' in cfg).toBe(true);
   });
 
   it('accepts a gemini-compat custom URL without /v1', () => {
@@ -76,9 +76,9 @@ describe('buildConfig', () => {
 
   it('requires a custom name and URL', () => {
     const noName = buildConfig({ providerId: 'custom', customName: '', customUrl: 'https://x.test/v1', customCompat: 'openai', model: 'm', modelFromList: false, apiKey: 'k', providers: PROVIDERS });
-    expect('error' in noName).toBe(true);
+    expect('errors' in noName).toBe(true);
     const noUrl = buildConfig({ providerId: 'custom', customName: 'X', customUrl: '', customCompat: 'openai', model: 'm', modelFromList: false, apiKey: 'k', providers: PROVIDERS });
-    expect('error' in noUrl).toBe(true);
+    expect('errors' in noUrl).toBe(true);
   });
 });
 

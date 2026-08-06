@@ -20,6 +20,7 @@
           <div class="field grow">
             <label for="provider">Provider</label>
             <select id="provider"></select>
+            <p class="field-error" data-error-for="provider" hidden></p>
           </div>
           <button type="button" id="refresh-providers" class="side" title="Re-fetch the well-known providers list">Refresh list</button>
         </div>
@@ -27,9 +28,11 @@
         <div id="custom-fields" hidden>
           <label for="custom-name">Provider name</label>
           <input id="custom-name" type="text" spellcheck="false" placeholder="My Gateway" />
+          <p class="field-error" data-error-for="custom-name" hidden></p>
 
           <label for="custom-url">Base URL</label>
           <input id="custom-url" type="url" spellcheck="false" placeholder="https://gateway.example.com/v1" />
+          <p class="field-error" data-error-for="custom-url" hidden></p>
 
           <label for="custom-compat">API compatibility</label>
           <select id="custom-compat">
@@ -44,6 +47,7 @@
             <label for="model">Model</label>
             <select id="model-select" hidden></select>
             <input id="model-input" type="text" spellcheck="false" hidden placeholder="model-id (e.g. my-model-2b)" aria-describedby="model-help" />
+            <p class="field-error" data-error-for="model" hidden></p>
             <p id="model-help" class="hint">
               Models are fetched from the provider when possible. If none are
               available, type a model id — lowercase letters, digits, hyphens,
@@ -54,18 +58,30 @@
         </div>
 
         <label for="api-key">API key</label>
-        <input id="api-key" type="password" spellcheck="false" placeholder="Paste your provider API key" />
+        <div class="secret">
+          <input id="api-key" type="password" spellcheck="false" autocomplete="off" placeholder="Paste your provider API key" />
+          <button type="button" id="api-key-toggle" class="eye" aria-pressed="false" title="Show API key">Show</button>
+        </div>
+        <p class="field-error" data-error-for="api-key" hidden></p>
 
-        <label for="confidence-threshold">Confidence threshold</label>
-        <input
-          id="confidence-threshold"
-          type="number"
-          min="0"
-          max="90"
-          step="1"
-          inputmode="numeric"
-          title="A rewrite is only applied when its similarity to the original scores at least this value. Set it low to have more text rewritten; raise it to be more conservative — the higher you set it, the more text stays exactly as it was. Default: 50. Range: 0–90."
-        />
+        <div class="field">
+          <label for="confidence-threshold">
+            Confidence threshold
+            <output id="threshold-value" class="threshold-value" for="confidence-threshold">50</output>
+          </label>
+          <input
+            id="confidence-threshold"
+            type="range"
+            min="0"
+            max="90"
+            step="1"
+            aria-describedby="threshold-help"
+          />
+          <p id="threshold-help" class="hint">
+            Higher is more conservative — a rewrite only applies when its polish
+            scores at least this value. Default: 50.
+          </p>
+        </div>
 
         <div class="actions">
           <button type="submit" class="primary">Save</button>

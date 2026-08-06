@@ -1,6 +1,4 @@
-:root {
-  color-scheme: light dark;
-}
+@import '../../styles/tokens.css';
 
 * {
   box-sizing: border-box;
@@ -8,32 +6,19 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--tp-font);
   line-height: 1.5;
-  color: #1c1c1e;
-  background: #f5f5f7;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    color: #f2f2f7;
-    background: #1c1c1e;
-  }
+  color: var(--tp-text);
+  background: var(--tp-surface);
 }
 
 .card {
   max-width: 32rem;
   margin: 2rem auto;
   padding: 1.5rem 1.75rem;
-  background: #fff;
-  border-radius: 12px;
+  background: var(--tp-elevated);
+  border-radius: var(--tp-radius-lg);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-}
-
-@media (prefers-color-scheme: dark) {
-  .card {
-    background: #2c2c2e;
-  }
 }
 
 h1 {
@@ -53,18 +38,23 @@ form label {
   margin-bottom: 0.35rem;
 }
 
-input, select {
+input[type='text'],
+input[type='url'],
+input[type='password'],
+select {
   width: 100%;
   padding: 0.55rem 0.65rem;
   font-size: 1rem;
-  border: 1px solid #c7c7cc;
-  border-radius: 8px;
-  background: #fff;
+  border: 1px solid var(--tp-border);
+  border-radius: var(--tp-radius-md);
+  background: var(--tp-elevated);
   color: inherit;
 }
 
-input#api-key, input#confidence-threshold, input#model-input, input#custom-name, input#custom-url {
-  width: 100%;
+input:focus,
+select:focus {
+  outline: 2px solid var(--tp-focus);
+  outline-offset: -1px;
 }
 
 .field-row {
@@ -82,18 +72,56 @@ button.side {
   padding: 0.5rem 0.75rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  input, select {
-    border-color: #48484a;
-    background: #1c1c1e;
-    color: #fff;
-  }
-}
-
 .hint {
   font-size: 0.85rem;
   opacity: 0.7;
   margin: 0.4rem 0;
+}
+
+/* API key with a show/hide toggle */
+.secret {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.secret input {
+  flex: 1;
+}
+
+button.eye {
+  flex-shrink: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--tp-text-secondary);
+}
+
+button.eye[aria-pressed='true'] {
+  color: var(--tp-link);
+}
+
+/* Inline per-field validation */
+.field-error {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+  color: var(--tp-err);
+}
+
+/* Confidence threshold slider + live value */
+.threshold-value {
+  display: inline-block;
+  min-width: 2.2em;
+  margin-left: 0.4rem;
+  padding: 0 0.4rem;
+  border-radius: var(--tp-radius-sm);
+  background: var(--tp-surface);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--tp-brand);
 }
 
 .actions {
@@ -105,20 +133,25 @@ button.side {
 button {
   padding: 0.5rem 1rem;
   font-size: 0.95rem;
-  border-radius: 8px;
-  border: 1px solid #c7c7cc;
-  background: #fff;
+  border-radius: var(--tp-radius-md);
+  border: 1px solid var(--tp-border);
+  background: var(--tp-elevated);
+  color: var(--tp-text);
   cursor: pointer;
 }
 
+button:hover {
+  background: var(--tp-surface);
+}
+
 button.primary {
-  background: #0a7cff;
-  border-color: #0a7cff;
-  color: #fff;
+  background: var(--tp-brand);
+  border-color: var(--tp-brand);
+  color: var(--tp-brand-fg);
 }
 
 button.primary:hover {
-  background: #0a6fe0;
+  background: var(--tp-brand-hover);
 }
 
 .status {
@@ -128,9 +161,9 @@ button.primary:hover {
 }
 
 .status.ok {
-  color: #1a9e52;
+  color: var(--tp-ok);
 }
 
 .status.err {
-  color: #d11a2a;
+  color: var(--tp-err);
 }

@@ -28,28 +28,33 @@ export interface ConfigInput {
   providers: ProviderDef[];
 }
 
-export type ConfigResult = LlmConfig | { error: string };
+/** A build failure keyed by the form field that must be fixed. */
+export type ConfigErrors = Partial<Record<'provider' | 'customName' | 'customUrl' | 'model' | 'apiKey', string>>;
 
-/** Build a validated config from form values; `{ error }` on invalid input. */
+export type ConfigResult = LlmConfig | { errors: ConfigErrors };
+
+/** Build a validated config from form values; `{ errors }` on invalid input. */
 export function buildConfig(input: ConfigInput): ConfigResult {
   const apiKey = input.apiKey.trim();
-  if (!apiKey) return { error: 'Enter an API key before saving.' };
+  if (!apiKey) return { errors: { apiKey: 'Enter an API key before saving.' } };
   const model = input.model.trim();
-  if (!model) return { error: 'Select or enter a model.' };
+  if (!model) return { errors: { model: 'Select or enter a model.' } };
   if (!input.modelFromList && !isValidModelId(model)) {
-    return { error: 'Model id may only contain lowercase letters, digits, hyphens, dots, colons, and slashes.' };
+    return { errors: { model: 'Model id may only contain lowercase letters, digits, hyphens, dots, colons, and slashes.' } };
   }
 
   if (input.providerId === 'custom') {
     const customName = (input.customName ?? '').trim();
     const customUrl = (input.customUrl ?? '').trim();
     const compat = input.customCompat ?? 'openai';
-    if (!customName) return { error: 'Enter a name for the custom provider.' };
-    if (!customUrl) return { error: 'Enter a base URL for the custom provider.' };
+    if (!customName) return { errors: { customName: 'Enter a name for the custom provider.' } };
+    if (!customUrl) return { errors: { customUrl: 'Enter a base URL for the custom provider.' } };
     if (!isValidCustomUrl(customUrl, compat)) {
       return {
-        error:
-          'That base URL is invalid for the selected compatibility: https ending in /v1 for openai/anthropic (http allowed for localhost), or a generativelanguage root for gemini.',
+        errors: {
+          customUrl:
+            'That base URL is invalid for the selected compatibility: https ending in /v1 for openai/anthropic (http allowed for localhost), or a generativelanguage root for gemini.',
+        },
       };
     }
     return {
@@ -63,7 +68,7 @@ export function buildConfig(input: ConfigInput): ConfigResult {
   }
 
   const provider = getProviderById(input.providers, input.providerId);
-  if (!provider) return { error: 'Unknown provider.' };
+  if (!provider) return { errors: { provider: 'Unknown provider.' } };
   return {
     providerId: provider.id,
     baseUrl: provider.baseUrl,

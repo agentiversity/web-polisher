@@ -29,6 +29,8 @@ export async function initOptions(doc: Document, storage = browser.storage.local
     apiKey: el('api-key'),
     status: el('status'),
     threshold: el<HTMLInputElement>('confidence-threshold'),
+    thresholdValue: el<HTMLElement>('threshold-value'),
+    apiKeyToggle: el<HTMLButtonElement>('api-key-toggle'),
     clearBtn: el<HTMLButtonElement>('clear'),
     refreshProvidersBtn: el<HTMLButtonElement>('refresh-providers'),
     refreshModelsBtn: el<HTMLButtonElement>('refresh-models'),
@@ -39,8 +41,8 @@ export async function initOptions(doc: Document, storage = browser.storage.local
   // minimal chat completion and never persists anything.
   el('test-connection').addEventListener('click', async () => {
     const cfg = form.collect();
-    if ('error' in cfg) {
-      setStatus(handles.status, cfg.error, 'err');
+    if ('errors' in cfg) {
+      setStatus(handles.status, 'Fix the highlighted fields before testing.', 'err');
       return;
     }
     setStatus(handles.status, 'Testing connection…', '');
