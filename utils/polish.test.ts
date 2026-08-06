@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { polishContent, polishRoot, collectEligibleTextNodes, isMeaningfullyChanged, PENDING_CLASS, PROCESSED_ATTR, markProcessed } from './polish';
+import { polishRoots, collectEligibleTextNodes, isMeaningfullyChanged, PENDING_CLASS, PROCESSED_ATTR, markProcessed } from './polish';
+import { findUserContentRoots } from './contentDetector';
 import { MIN_TEXT_LENGTH } from './settings';
 const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -19,6 +20,11 @@ function setupArticles(): void {
 
 function replyFor(results: { ok: boolean; text: string }[], notConfigured = false) {
   return { type: 'transform-text-result', results, notConfigured };
+}
+
+/** Detect the page's user-content roots and polish them in one pass. */
+function polishPage(): Promise<Awaited<ReturnType<typeof polishRoots>>> {
+  return polishRoots(findUserContentRoots(document.body, 'example.com'), 'example.com');
 }
 
 beforeEach(() => {
@@ -66,7 +72,7 @@ describe('collectEligibleTextNodes', () => {
   });
 });
 
-describe('polishContent', () => {
+describe('polishRoots', () => {
   it('applies successful results back to the same text nodes and marks roots', async () => {
     setupArticles();
     mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) =>
@@ -78,7 +84,7 @@ describe('polishContent', () => {
       ),
     );
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     expect(result.requested).toBe(2);
     expect(result.applied).toBe(2);
     expect(result.notConfigured).toBe(false);
@@ -103,7 +109,7 @@ describe('polishContent', () => {
       ),
     );
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     expect(result.applied).toBe(2);
     const highlighted = [...document.querySelectorAll<HTMLElement>('.text-polished')];
     expect(highlighted).toHaveLength(2);
@@ -117,7 +123,7 @@ describe('polishContent', () => {
     let resolveSend!: (r: unknown) => void;
     mocks.sendMessage.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
 
-    const promise = polishContent('example.com');
+    const promise = polishPage();
     // While the LLM call is in flight, the block carries the pending animation.
     await vi.waitFor(
       () => expect(document.querySelector('article p')?.classList.contains(PENDING_CLASS)).toBe(true),
@@ -135,7 +141,7 @@ describe('polishContent', () => {
     document.body.innerHTML = '<article><p>This sentence is already completely natural English text here.</p></article>';
     mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'This sentence is already completely natural English text here.' }]));
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     expect(result.applied).toBe(0);
     const p = document.querySelector('article p') as HTMLElement;
     expect(p.classList.contains(PENDING_CLASS)).toBe(false);
@@ -146,7 +152,7 @@ describe('polishContent', () => {
     setupArticles();
     mocks.sendMessage.mockResolvedValue(replyFor([], true));
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     expect(result.notConfigured).toBe(true);
     expect(result.applied).toBe(0);
     expect(document.body.textContent).toContain('this is a user comment');
@@ -164,7 +170,7 @@ describe('polishContent', () => {
       ]),
     );
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     expect(result.applied).toBe(0);
     expect(document.body.textContent).toContain('this is a user comment');
     expect(document.querySelectorAll('article')[0]!.hasAttribute(PROCESSED_ATTR)).toBe(false);
@@ -179,12 +185,12 @@ describe('polishContent', () => {
       ]),
     );
 
-    const first = await polishContent('example.com');
+    const first = await polishPage();
     expect(first.applied).toBe(2);
 
     // Second click: roots are now marked; nothing is collected or sent.
     mocks.sendMessage.mockClear();
-    const second = await polishContent('example.com');
+    const second = await polishPage();
     expect(second.requested).toBe(0);
     expect(second.applied).toBe(0);
     expect(mocks.sendMessage).not.toHaveBeenCalled();
@@ -196,32 +202,23 @@ describe('polishContent', () => {
     mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) =>
       replyFor(msg.texts.map((t) => ({ ok: true, text: t }))),
     );
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     // No textual change, so not counted as applied (and nothing to write).
     expect(result.applied).toBe(0);
     expect(document.body.textContent).toContain('this is a user comment');
   });
-
-  it('does nothing when there is no body', async () => {
-    // jsdom document has a body; simulate none by detaching it for this call.
-    const body = document.body;
-    body.remove();
-    const result = await polishContent('example.com');
-    expect(result.applied).toBe(0);
-    expect(result.requested).toBe(0);
-    // Restore for later tests.
-    document.documentElement.append(body);
-  });
 });
 
-describe('polishRoot (per-root path)', () => {
+describe('polishRoots (per-root path)', () => {
   it('polishes a single root and marks only it processed', async () => {
     setupArticles();
     mocks.sendMessage.mockResolvedValue(replyFor([{ ok: true, text: 'POLISHED ONE' }]));
 
     const root = document.querySelector('article') as HTMLElement;
-    const r = await polishRoot(root, 'example.com');
-    expect(r).toEqual({ requested: 1, applied: 1, notConfigured: false });
+    const r = await polishRoots([root], 'example.com');
+    expect(r.requested).toBe(1);
+    expect(r.applied).toBe(1);
+    expect(r.notConfigured).toBe(false);
     expect(root.hasAttribute(PROCESSED_ATTR)).toBe(true);
     expect(document.querySelectorAll('article')[1]!.hasAttribute(PROCESSED_ATTR)).toBe(false);
   });
@@ -231,8 +228,10 @@ describe('polishRoot (per-root path)', () => {
     const root = document.querySelector('article') as HTMLElement;
     markProcessed(root);
 
-    const r = await polishRoot(root, 'example.com');
-    expect(r).toEqual({ requested: 0, applied: 0, notConfigured: false });
+    const r = await polishRoots([root], 'example.com');
+    expect(r.requested).toBe(0);
+    expect(r.applied).toBe(0);
+    expect(r.notConfigured).toBe(false);
     expect(mocks.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -241,8 +240,10 @@ describe('polishRoot (per-root path)', () => {
     mocks.sendMessage.mockResolvedValue(replyFor([], true));
 
     const root = document.querySelector('article') as HTMLElement;
-    const r = await polishRoot(root, 'example.com');
-    expect(r).toEqual({ requested: 1, applied: 0, notConfigured: true });
+    const r = await polishRoots([root], 'example.com');
+    expect(r.requested).toBe(1);
+    expect(r.applied).toBe(0);
+    expect(r.notConfigured).toBe(true);
     expect(root.hasAttribute(PROCESSED_ATTR)).toBe(false);
   });
 });
@@ -252,7 +253,7 @@ describe('edge cases', () => {
     setupArticles();
     mocks.sendMessage.mockRejectedValue(new Error('context invalidated'));
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     // Should degrade gracefully — no crash, no applied rewrites.
     expect(result.applied).toBe(0);
     expect(result.notConfigured).toBe(false);
@@ -275,7 +276,7 @@ describe('edge cases', () => {
       );
     });
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     // Detached node's rewrite is not applied; the other root still is.
     expect(result.applied).toBe(1);
     expect(document.body.textContent).not.toContain('SHOULD NOT APPLY');
@@ -290,7 +291,7 @@ describe('edge cases', () => {
     // node means nothing is applied — nothing crashes.
     mocks.sendMessage.mockResolvedValue(replyFor([]));
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     expect(result.applied).toBe(0);
     expect(document.body.textContent).not.toContain('ONLY ONE');
   });
@@ -303,7 +304,7 @@ describe('edge cases', () => {
       notConfigured: false,
     });
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
     // null result should be skipped, valid result applied if meaningfully changed.
     expect(result.applied).toBeLessThanOrEqual(1);
   });

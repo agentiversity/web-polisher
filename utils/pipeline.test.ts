@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { startPolish, stopPolish, pausePolish, resumePolish, PolishPipeline } from './pipeline';
+import { PolishPipeline } from './pipeline';
 import { findUserContentRoots } from './contentDetector';
 import { PROCESSED_ATTR } from './polish';
 import { MUTATION_SCAN_DELAY_MS, MUTATION_SCAN_BACKOFF_MAX_MS } from './settings';
@@ -18,6 +18,9 @@ vi.mock('./contentDetector', async (importOriginal) => {
 });
 
 const tick = (ms = 0) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** The active pipeline under test; stopped in afterEach so observers/listeners tear down. */
+let pipe: PolishPipeline | null = null;
 
 /** Minimal IntersectionObserver stand-in so tests can drive intersections. */
 type IOEntry = { target: Element; isIntersecting: boolean };
@@ -87,7 +90,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  stopPolish();
+  pipe?.stop();
+  pipe = null;
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   Element.prototype.getBoundingClientRect = realRect;
 });
@@ -101,7 +105,8 @@ describe('PolishPipeline', () => {
       c: { top: 6000, bottom: 6100 },
     });
 
-    const result = await startPolish('example.com');
+    pipe = new PolishPipeline('example.com');
+    const result = await pipe.start();
     expect(result.applied).toBe(1);
     expect(result.pending).toBe(2);
 
@@ -129,7 +134,8 @@ describe('PolishPipeline', () => {
       b: { top: 5000, bottom: 5100 },
       c: { top: 6000, bottom: 6100 },
     });
-    await startPolish('example.com'); // only a processed
+    pipe = new PolishPipeline('example.com');
+    await pipe.start(); // only a processed
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
 
     window.dispatchEvent(new Event('scroll'));
@@ -149,7 +155,8 @@ describe('PolishPipeline', () => {
   it('picks up content mounted after the trigger (MutationObserver)', async () => {
     body();
     setupRects({ a: { top: 0, bottom: 100 } }); // b and c default to in-view
-    await startPolish('example.com');
+    pipe = new PolishPipeline('example.com');
+    await pipe.start();
     expect(document.querySelector('[data-id="c"]')?.hasAttribute(PROCESSED_ATTR)).toBe(true);
 
     const el = document.createElement('article');
@@ -167,7 +174,8 @@ describe('PolishPipeline', () => {
   it('scans a shared parent once when a batch of siblings is added at once', async () => {
     body();
     setupRects({ a: { top: 0, bottom: 100 } }); // everything in view
-    await startPolish('example.com');
+    pipe = new PolishPipeline('example.com');
+    await pipe.start();
     vi.mocked(findUserContentRoots).mockClear();
 
     for (let i = 0; i < 10; i++) {
@@ -188,7 +196,7 @@ describe('PolishPipeline', () => {
   it('grows the scan backoff even while new content keeps being found', async () => {
     body();
     setupRects({ a: { top: 0, bottom: 100 } });
-    const pipe = new PolishPipeline('example.com');
+    pipe = new PolishPipeline('example.com');
     await pipe.start();
     expect(pipe.scanDelay).toBe(MUTATION_SCAN_DELAY_MS);
 
@@ -199,15 +207,15 @@ describe('PolishPipeline', () => {
 
     // The first scan finds the new root but still backs off (no scroll reset),
     // so an unattended live tab settles instead of scanning every 250ms.
-    await vi.waitFor(() => expect(pipe.scanDelay).toBeGreaterThan(MUTATION_SCAN_DELAY_MS), { timeout: 3000 });
-    expect(pipe.scanDelay).toBeLessThanOrEqual(MUTATION_SCAN_BACKOFF_MAX_MS);
-    pipe.stop();
+    await vi.waitFor(() => expect(pipe!.scanDelay).toBeGreaterThan(MUTATION_SCAN_DELAY_MS), { timeout: 3000 });
+    expect(pipe!.scanDelay).toBeLessThanOrEqual(MUTATION_SCAN_BACKOFF_MAX_MS);
   });
 
   it('defers mutation re-detection while the user is scrolling', async () => {
     body();
     setupRects({ a: { top: 0, bottom: 100 } });
-    await startPolish('example.com');
+    pipe = new PolishPipeline('example.com');
+    await pipe.start();
 
     window.dispatchEvent(new Event('scroll')); // scroll-pause window opens
     const el = document.createElement('article');
@@ -233,17 +241,18 @@ describe('PolishPipeline', () => {
       b: { top: 5000, bottom: 5100 },
       c: { top: 6000, bottom: 6100 },
     });
-    await startPolish('example.com'); // a processed, b+c observed
+    pipe = new PolishPipeline('example.com');
+    await pipe.start(); // a processed, b+c observed
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
 
     // Pause, then bring B into view — it must not be sent to the API.
-    pausePolish();
+    pipe.pause();
     FakeIO.instances[0]!.fire(document.querySelector('[data-id="b"]') as Element);
     await tick(80);
     expect(mocks.sendMessage).toHaveBeenCalledTimes(1);
 
     // Resume: queued work continues from where it paused.
-    resumePolish();
+    pipe.resume();
     await vi.waitFor(() => expect(mocks.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2), {
       timeout: 3000,
     });
@@ -259,7 +268,7 @@ describe('PolishPipeline', () => {
       c: { top: 6000, bottom: 6100 },
     });
     const statuses: string[] = [];
-    const pipe = new PolishPipeline('example.com', (s) => statuses.push(s));
+    pipe = new PolishPipeline('example.com', (s) => statuses.push(s));
     await pipe.start();
     expect(pipe.state).toBe('running'); // b,c still observed off-screen
     pipe.pause();
@@ -274,7 +283,7 @@ describe('PolishPipeline', () => {
     body();
     setupRects({ a: { top: 0, bottom: 100 } }); // everything is in view
     const statuses: string[] = [];
-    const pipe = new PolishPipeline('example.com', (s) => statuses.push(s));
+    pipe = new PolishPipeline('example.com', (s) => statuses.push(s));
     await pipe.start();
     expect(pipe.state).toBe('done');
     expect(statuses).toContain('done');
@@ -283,8 +292,19 @@ describe('PolishPipeline', () => {
   it('falls back to a single full pass when IntersectionObserver is unavailable', async () => {
     delete (globalThis as Record<string, unknown>).IntersectionObserver;
     body();
-    const result = await startPolish('example.com');
+    pipe = new PolishPipeline('example.com');
+    const result = await pipe.start();
     expect(result.applied).toBe(3);
     expect(result.pending).toBe(0);
+  });
+
+  it('is a no-op when there is no body', async () => {
+    const body = document.body;
+    body.remove();
+    pipe = new PolishPipeline('example.com');
+    const result = await pipe.start();
+    expect(result.applied).toBe(0);
+    expect(result.requested).toBe(0);
+    document.documentElement.append(body);
   });
 });

@@ -24,7 +24,8 @@
  */
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { polishContent } from './polish';
+import { polishRoots } from './polish';
+import { findUserContentRoots } from './contentDetector';
 import { transform } from './llmClient';
 
 const KEY_ENV = 'GEMINI_API_KEY';
@@ -115,6 +116,11 @@ function buildDomFrom(comments: string[]): void {
   `;
 }
 
+/** Detect the page's user-content roots and polish them in one pass. */
+async function polishPage() {
+  return polishRoots(findUserContentRoots(document.body, 'example.com'), 'example.com');
+}
+
 describe.skipIf(!hasKey)('live end-to-end (real Gemini)', () => {
   let comments: string[];
 
@@ -142,7 +148,7 @@ describe.skipIf(!hasKey)('live end-to-end (real Gemini)', () => {
   it('rewrites imperfect user English into natural English and leaves UI untouched', async () => {
     buildDomFrom(comments);
 
-    const result = await polishContent('example.com');
+    const result = await polishPage();
 
     expect(result.requested).toBe(comments.length);
     expect(result.applied).toBeGreaterThan(0);
@@ -183,11 +189,11 @@ describe.skipIf(!hasKey)('live end-to-end (real Gemini)', () => {
 
   it('does not double-transform when apply runs a second time', async () => {
     buildDomFrom(comments);
-    const first = await polishContent('example.com');
+    const first = await polishPage();
     expect(first.applied).toBeGreaterThan(0);
     const snapshot = document.body.innerHTML;
 
-    const second = await polishContent('example.com');
+    const second = await polishPage();
     expect(second.requested).toBe(0);
     expect(second.applied).toBe(0);
     expect(document.body.innerHTML).toBe(snapshot);

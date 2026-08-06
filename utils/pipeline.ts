@@ -131,7 +131,6 @@ export class PolishPipeline {
     if (this.mutationTimer !== null) clearTimeout(this.mutationTimer);
     window.removeEventListener('scroll', this.onScroll);
     this.recomputeStatus();
-    if (activePipeline === this) activePipeline = null;
   }
 
   private isNearViewport(el: Element): boolean {
@@ -304,38 +303,4 @@ export class PolishPipeline {
       this.scrollTimer = null;
     }, SCROLL_PAUSE_MS);
   };
-}
-
-let activePipeline: PolishPipeline | null = null;
-
-/**
- * Start the lazy polish pipeline for a page. Resolves once the initial
- * viewport pass completes; scroll-driven and dynamic-content processing
- * continue in the background. Replaces any previously running pipeline.
- */
-export async function startPolish(hostname: string): Promise<PolishResult> {
-  activePipeline?.stop();
-  const pipeline = new PolishPipeline(hostname);
-  activePipeline = pipeline;
-  return pipeline.start();
-}
-
-/** Tear down any running pipeline (e.g. page lifecycle reset). */
-export function stopPolish(): void {
-  activePipeline?.stop();
-}
-
-/** Pause the active pipeline (toggle): queued work waits until resume. */
-export function pausePolish(): void {
-  activePipeline?.pause();
-}
-
-/** Resume the active pipeline from where it paused. */
-export function resumePolish(): void {
-  activePipeline?.resume();
-}
-
-/** Current lifecycle status of the active pipeline (for the toolbar icon). */
-export function currentPipelineState(): PipelineStatus {
-  return activePipeline?.state ?? 'idle';
 }

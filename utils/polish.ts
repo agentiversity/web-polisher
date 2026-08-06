@@ -12,7 +12,7 @@
  * - On any failure / no-op it keeps the original text.
  */
 import { browser } from 'wxt/browser';
-import { findUserContentRoots, getSiteProfile, isExcluded, type SiteProfile } from './contentDetector';
+import { getSiteProfile, isExcluded, type SiteProfile } from './contentDetector';
 import { walkTextNodesIncludingShadow } from './domWalk';
 import { MIN_TEXT_LENGTH, MAX_TEXT_LENGTH, BATCH_SIZE } from './settings';
 import type { TransformResult } from './llmClient';
@@ -36,13 +36,6 @@ export interface PolishResult {
   /** Number of content roots still waiting to be processed (Phase 4 lazy). */
   pending: number;
   /** True when the request was a no-op because no API key is configured. */
-  notConfigured: boolean;
-}
-
-/** Per-root result of a single `polishRoot` pass. */
-export interface PolishRootResult {
-  requested: number;
-  applied: number;
   notConfigured: boolean;
 }
 
@@ -71,8 +64,6 @@ export function collectEligibleTextNodes(
   }
   return nodes;
 }
-
-const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false };
 
 /**
  * Normalize for a visible-text comparison: collapse whitespace, lowercase,
@@ -242,27 +233,4 @@ export async function polishRoots(roots: Element[], hostname: string): Promise<P
     );
   }
   return { requested, applied, blocks, pending: 0, notConfigured };
-}
-
-/**
- * Polish a single content root (scroll-driven / per-root path). The root is
- * marked processed only when at least one rewrite is applied, so a later pass
- * with a key can still retry after a full failure.
- */
-export async function polishRoot(root: Element, hostname: string): Promise<PolishRootResult> {
-  const r = await polishRoots([root], hostname);
-  return { requested: r.requested, applied: r.applied, notConfigured: r.notConfigured };
-}
-
-/**
- * Polish every detected user-content block on the page in one pass (legacy
- * entry point, used by unit/integration tests; the browser flow uses the lazy
- * pipeline in `pipeline.ts`). Detects roots → `polishRoots` each batch.
- */
-export async function polishContent(hostname: string): Promise<PolishResult> {
-  if (!document.body) return EMPTY;
-  const roots = findUserContentRoots(document.body, hostname);
-  if (roots.length === 0) return EMPTY;
-  const r = await polishRoots(roots, hostname);
-  return { ...r, pending: 0 };
 }

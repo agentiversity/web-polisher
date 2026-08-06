@@ -186,34 +186,56 @@ function classifyError(err: unknown): string {
   return 'network';
 }
 
+/** Options for one chat call through the configured provider. */
+interface ChatCompletionOptions {
+  prompt: string;
+  system?: string;
+  /** Gemini emits JSON-mime output (transform path); plain text for test connection. */
+  json: boolean;
+  timeoutMs: number;
+}
+
+/**
+ * One bounded chat call through the configured provider. The compat switch
+ * (gemini/openai/anthropic) lives only here — the transform and test-connection
+ * paths share it, so a fourth provider needs one edit, not two. Errors are
+ * left to the callers' try/catch, which classify them.
+ */
+async function chatCompletion(config: LlmConfig, opts: ChatCompletionOptions): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs);
+  try {
+    if (config.apiCompatibility === 'gemini') {
+      const genAI = new GoogleGenerativeAI(config.apiKey);
+      const model = genAI.getGenerativeModel({ model: config.model });
+      const resp = await model.generateContent(
+        {
+          contents: [{ role: 'user', parts: [{ text: opts.prompt }] }],
+          systemInstruction: opts.system,
+          generationConfig: opts.json ? { responseMimeType: 'application/json', temperature: 0.4 } : undefined,
+        },
+        { signal: controller.signal },
+      );
+      return resp.response.text();
+    }
+    if (config.apiCompatibility === 'anthropic') {
+      return await anthropicChat(config.baseUrl ?? '', config.model, opts.prompt, config.apiKey, controller.signal, opts.system);
+    }
+    return await openAiChat(config.baseUrl ?? '', config.model, opts.prompt, config.apiKey, controller.signal, opts.system);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** One bounded batch through the configured provider; never throws. */
 async function transformBatch(
   config: LlmConfig,
   texts: string[],
   confidenceThreshold: number,
 ): Promise<TransformResult[]> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
   try {
     const prompt = buildBatchPrompt(texts);
-    let raw: string;
-    if (config.apiCompatibility === 'gemini') {
-      const genAI = new GoogleGenerativeAI(config.apiKey);
-      const model = genAI.getGenerativeModel({ model: config.model });
-      const resp = await model.generateContent(
-        {
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          systemInstruction: SYSTEM_PROMPT,
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.4 },
-        },
-        { signal: controller.signal },
-      );
-      raw = resp.response.text();
-    } else if (config.apiCompatibility === 'anthropic') {
-      raw = await anthropicChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal, SYSTEM_PROMPT);
-    } else {
-      raw = await openAiChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal, SYSTEM_PROMPT);
-    }
+    const raw = await chatCompletion(config, { prompt, system: SYSTEM_PROMPT, json: true, timeoutMs: LLM_TIMEOUT_MS });
     const parsed = parseResults(raw);
     return texts.map((original, i) => {
       const candidate = parsed?.[i];
@@ -235,8 +257,6 @@ async function transformBatch(
   } catch (err) {
     const error = classifyError(err);
     return texts.map(() => ({ ok: false, text: '', error }));
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -300,26 +320,10 @@ export async function transform(texts: string[]): Promise<TransformResult[]> {
  * persists anything. Returns a normalized failure reason on error.
  */
 export async function testConnection(config: LlmConfig): Promise<{ ok: boolean; reason?: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const prompt = 'Reply with exactly: ok';
-    if (config.apiCompatibility === 'gemini') {
-      const genAI = new GoogleGenerativeAI(config.apiKey);
-      const model = genAI.getGenerativeModel({ model: config.model });
-      await model.generateContent(
-        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-        { signal: controller.signal },
-      );
-    } else if (config.apiCompatibility === 'anthropic') {
-      await anthropicChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal);
-    } else {
-      await openAiChat(config.baseUrl ?? '', config.model, prompt, config.apiKey, controller.signal);
-    }
+    await chatCompletion(config, { prompt: 'Reply with exactly: ok', json: false, timeoutMs: 15000 });
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: classifyError(err) };
-  } finally {
-    clearTimeout(timer);
   }
 }
