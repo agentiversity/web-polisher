@@ -62,7 +62,7 @@ body {
 }
 
 .status.status-paused {
-  color: #b45309;
+  color: var(--tp-warn);
 }
 
 .settings {

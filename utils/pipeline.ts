@@ -33,7 +33,6 @@ export class PolishPipeline {
   private readonly stats = { requested: 0, applied: 0, notConfigured: false };
   private readonly errors: Record<string, number> = {};
   private readonly rewrites: RewriteRecord[] = [];
-  private completed = 0;
   private scrollPaused = false;
   private scrollTimer: ReturnType<typeof setTimeout> | null = null;
   private mutationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -43,12 +42,13 @@ export class PolishPipeline {
   private inFlight = 0;
   private status: PipelineStatus = 'idle';
   private readonly statusCallback?: (status: PipelineStatus) => void;
-  private readonly onProgress?: (completed: number) => void;
+  /** Emitted after each root processes, with the cumulative applied count. */
+  private readonly onProgress?: (applied: number) => void;
 
   constructor(
     hostname: string,
     statusCallback?: (status: PipelineStatus) => void,
-    onProgress?: (completed: number) => void,
+    onProgress?: (applied: number) => void,
   ) {
     this.hostname = hostname;
     this.statusCallback = statusCallback;
@@ -77,11 +77,6 @@ export class PolishPipeline {
   /** Cumulative eligible nodes collected across the pass. */
   get requestedCount(): number {
     return this.stats.requested;
-  }
-
-  /** Cumulative failure breakdown by error kind. */
-  get errorSummary(): Record<string, number> {
-    return { ...this.errors };
   }
 
   private setState(s: PipelineStatus): void {
@@ -295,8 +290,7 @@ export class PolishPipeline {
       await this.waitWhilePaused();
       if (this.stopped || el.hasAttribute(PROCESSED_ATTR)) return;
       this.accumulate(await polishRoots([el], this.hostname));
-      this.completed++;
-      this.onProgress?.(this.completed);
+      this.onProgress?.(this.stats.applied);
     } finally {
       this.inFlight--;
       this.queued.delete(el);

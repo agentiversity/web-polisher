@@ -87,6 +87,10 @@ export function isGetPolisherStatusMessage(msg: unknown): msg is GetPolisherStat
   return isObject(msg) && msg.type === 'get-polisher-status' && typeof msg.tabId === 'number';
 }
 
+export function isPolisherStatusReply(msg: unknown): msg is PolisherStatusReply {
+  return isObject(msg) && msg.type === 'polisher-status-reply' && typeof msg.status === 'string';
+}
+
 export function isTransformTextMessage(msg: unknown): msg is TransformTextMessage {
   return isObject(msg) && msg.type === 'transform-text' && Array.isArray(msg.texts);
 }

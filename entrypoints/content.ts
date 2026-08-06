@@ -69,9 +69,9 @@ function ensureHud(): HudElements {
   return hud;
 }
 
-function showHudRunning(done: number): void {
+function showHudRunning(applied: number): void {
   const h = ensureHud();
-  h.label.textContent = `Polishing… ${done} done`;
+  h.label.textContent = `Polishing… ${applied} done`;
   h.undoBtn.hidden = true;
 }
 
@@ -187,6 +187,10 @@ export default defineContentScript({
       pipeline?.stop();
       pipeline = null;
       hideHud();
+      if (toastTimer !== null) clearTimeout(toastTimer);
+      toastEl?.remove();
+      toastEl = null;
+      toastTimer = null;
       dbg('pagehide');
     });
 
@@ -205,7 +209,7 @@ export default defineContentScript({
       if (st === 'idle' || st === 'done') {
         // Start a fresh pass; the HUD shows progress and the done state persists.
         pipeline?.stop();
-        pipeline = new PolishPipeline(window.location.hostname, reportStatus, (done) => showHudRunning(done));
+        pipeline = new PolishPipeline(window.location.hostname, reportStatus, (applied) => showHudRunning(applied));
         const hudEl = ensureHud();
         hudEl.undoBtn.onclick = () => undoPolish(pipeline);
         hudEl.closeBtn.onclick = hideHud;

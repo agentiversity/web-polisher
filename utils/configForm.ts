@@ -69,35 +69,25 @@ export function setStatus(el: HTMLElement, message: string, kind: 'ok' | 'err' |
 
 const ERROR_SLOT = (slot: string) => `[data-error-for="${slot}"]`;
 
-/** DOM id of the input each validation field maps to. */
-const FIELD_INPUT_ID: Record<keyof ConfigErrors, string> = {
-  provider: 'provider',
-  customName: 'custom-name',
-  customUrl: 'custom-url',
-  model: 'model-input',
-  apiKey: 'api-key',
-};
-
-/** data-error-for value of the error slot for each validation field. */
-const FIELD_SLOT_ID: Record<keyof ConfigErrors, string> = {
-  provider: 'provider',
-  customName: 'custom-name',
-  customUrl: 'custom-url',
-  model: 'model',
-  apiKey: 'api-key',
+/** Per-field: data-error-for slot name + the input to flag aria-invalid on. */
+const FIELD_UI: Record<keyof ConfigErrors, { slot: string; input: string }> = {
+  provider: { slot: 'provider', input: '#provider' },
+  customName: { slot: 'custom-name', input: '#custom-name' },
+  customUrl: { slot: 'custom-url', input: '#custom-url' },
+  model: { slot: 'model', input: '#model-input, #model-select' },
+  apiKey: { slot: 'api-key', input: '#api-key' },
 };
 
 /** Render per-field validation errors under their inputs; clears all first. */
 function renderFieldErrors(form: HTMLFormElement, errors: ConfigErrors): void {
-  for (const field of Object.keys(FIELD_INPUT_ID) as (keyof ConfigErrors)[]) {
-    const slot = form.querySelector<HTMLElement>(ERROR_SLOT(FIELD_SLOT_ID[field]));
+  for (const field of Object.keys(FIELD_UI) as (keyof ConfigErrors)[]) {
+    const ui = FIELD_UI[field];
+    const slot = form.querySelector<HTMLElement>(ERROR_SLOT(ui.slot));
     if (!slot) continue;
     const msg = errors[field];
     slot.textContent = msg ?? '';
     slot.hidden = msg == null;
-    const input = field === 'model'
-      ? form.querySelector<HTMLInputElement>('#model-input, #model-select')
-      : form.querySelector<HTMLInputElement>(`#${FIELD_INPUT_ID[field]}`);
+    const input = form.querySelector<HTMLInputElement>(ui.input);
     if (input) {
       if (msg) input.setAttribute('aria-invalid', 'true');
       else input.removeAttribute('aria-invalid');
