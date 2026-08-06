@@ -1,7 +1,8 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { browser } from 'wxt/browser';
 import { PolishPipeline, type PipelineStatus } from '../utils/pipeline';
-import { PENDING_CLASS } from '../utils/polish';
+import { PROCESSED_ATTR } from '../utils/polish';
+import { OVERLAY_CSS } from '../utils/overlayStyles';
 import { isApplyPolishMessage, type ApplyPolishResponse } from '../utils/messages';
 
 /**
@@ -15,57 +16,123 @@ import { isApplyPolishMessage, type ApplyPolishResponse } from '../utils/message
  * - Respond to an `apply-polish` message from the background (triggered by the
  *   toolbar action button) by running the LLM-backed transform. Nothing is
  *   applied on page load; a click with no API key is a graceful no-op.
+ * - Drive the in-page overlay: a bottom-corner HUD (running "Polishing… N done"
+ *   → done "N rewritten · Undo · ✕", no auto-hide) plus one-shot error toasts.
  */
 
 /** Session-scoped guard key (design D5: state lives in storage.session). */
 const SESSION_INIT_KEY = 'phase1:content-initialized';
 
-const MODAL_ID = 'text-polisher-modal';
-const MODAL_AUTO_HIDE_MS = 5000;
-let modalStyleInjected = false;
+const HUD_ID = 'text-polisher-hud';
+const TOAST_ID = 'text-polisher-toast';
+const TOAST_MS = 6000;
+let overlayStyleInjected = false;
 
-/** Inject a tiny stylesheet for the polishing modal and highlight badges (once). */
-function ensureModalStyle(): void {
-  if (modalStyleInjected) return;
-  modalStyleInjected = true;
+/** Inject the overlay stylesheet once (HUD, toast, highlight, pending). */
+function ensureOverlayStyle(): void {
+  if (overlayStyleInjected) return;
+  overlayStyleInjected = true;
   const st = document.createElement('style');
-  st.textContent =
-    `#${MODAL_ID}{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;` +
-    `display:flex;align-items:center;gap:10px;background:rgba(17,17,17,.82);color:#fff;padding:14px 22px;` +
-    `border-radius:10px;font:600 15px/1 system-ui,-apple-system,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.35)}` +
-    `#${MODAL_ID} .tpspin{width:16px;height:16px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;` +
-    `border-radius:50%;animation:tpspin .7s linear infinite}` +
-    `@keyframes tpspin{to{transform:rotate(360deg)}}` +
-    `.text-polished[data-confidence]:not([data-confidence=""])::after{content:attr(data-confidence);` +
-    `margin-left:5px;padding:1px 5px;border-radius:4px;` +
-    `font:600 10px/1.4 system-ui,-apple-system,sans-serif;color:#0b57d0;background:rgba(11,87,208,.15)}` +
-    `.text-polished{background-color:#cfe4f7!important;border-radius:2px!important}` +
-    `.${PENDING_CLASS}{background-color:#e7e7ec!important;` +
-    `background-image:repeating-linear-gradient(135deg,transparent 0 10px,#f6f6f8 10px 20px,transparent 20px 30px,#f6f6f8 30px 40px)!important;` +
-    `animation:tp-scan 2.5s linear infinite!important}` +
-    // Shift by exactly one horizontal period of the 135deg pattern (40px·√2 ≈
-    // 56.57px) so the loop is seamless — animating by the gradient's own period
-    // would make the stripes jump back at each loop.
-    `@keyframes tp-scan{from{background-position:0 0}to{background-position:56.5685px 0}}`;
+  st.textContent = OVERLAY_CSS;
   (document.head || document.documentElement).appendChild(st);
 }
 
-/** Show a "Polishing…" modal overlay until the rewritten text has been injected. */
-function showPolishingModal(): void {
-  if (document.getElementById(MODAL_ID)) return;
-  ensureModalStyle();
-  const modal = document.createElement('div');
-  modal.id = MODAL_ID;
-  const spin = document.createElement('span');
-  spin.className = 'tpspin';
-  const label = document.createElement('span');
-  label.textContent = 'Polishing…';
-  modal.append(spin, label);
-  document.body.appendChild(modal);
+interface HudElements {
+  root: HTMLElement;
+  label: HTMLElement;
+  undoBtn: HTMLButtonElement;
+  closeBtn: HTMLButtonElement;
 }
 
-function hidePolishingModal(): void {
-  document.getElementById(MODAL_ID)?.remove();
+let hud: HudElements | null = null;
+let toastEl: HTMLElement | null = null;
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Create the HUD once; resolve to its parts. */
+function ensureHud(): HudElements {
+  if (hud && document.body.contains(hud.root)) return hud;
+  ensureOverlayStyle();
+  const root = document.createElement('div');
+  root.id = HUD_ID;
+  const label = document.createElement('span');
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'hud-undo';
+  undoBtn.textContent = 'Undo';
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'hud-close';
+  closeBtn.textContent = '✕';
+  root.append(label, undoBtn, closeBtn);
+  document.body.appendChild(root);
+  hud = { root, label, undoBtn, closeBtn };
+  return hud;
+}
+
+function showHudRunning(done: number): void {
+  const h = ensureHud();
+  h.label.textContent = `Polishing… ${done} done`;
+  h.undoBtn.hidden = true;
+}
+
+function showHudDone(applied: number): void {
+  const h = ensureHud();
+  h.label.textContent = `${applied} rewritten`;
+  h.undoBtn.hidden = false;
+}
+
+function hideHud(): void {
+  hud?.root.remove();
+  hud = null;
+}
+
+/** Show a one-shot toast; the newest replaces any pending one. */
+function showToast(message: string): void {
+  if (!toastEl || !document.body.contains(toastEl)) {
+    ensureOverlayStyle();
+    toastEl = document.createElement('div');
+    toastEl.id = TOAST_ID;
+    document.body.appendChild(toastEl);
+  }
+  toastEl.textContent = message;
+  toastEl.classList.add('show');
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl?.classList.remove('show'), TOAST_MS);
+}
+
+/** True when the only failures were quality-gate rejections (keep silent). */
+function onlyLowConfidence(errors: Record<string, number>): boolean {
+  const kinds = Object.keys(errors);
+  return kinds.length > 0 && kinds.every((k) => k === 'low-confidence');
+}
+
+/** Revert every rewrite of the last pass: text, highlights, processed marks. */
+function undoPolish(pipe: PolishPipeline | null): void {
+  if (!pipe) return;
+  for (const rec of pipe.undoRecords) {
+    rec.node.textContent = rec.original;
+    const parent = rec.node.parentElement;
+    if (parent) {
+      parent.classList.remove('text-polished');
+      parent.removeAttribute('title');
+      parent.removeAttribute('data-confidence');
+    }
+    const marked = parent?.closest(`[${PROCESSED_ATTR}]`);
+    marked?.removeAttribute(PROCESSED_ATTR);
+  }
+  hideHud();
+  showToast('Rewrites reverted.');
+}
+
+/** Decide which toast (if any) the pass result deserves. */
+function toastFor(requested: number, applied: number, notConfigured: boolean, errors: Record<string, number>): void {
+  if (notConfigured) {
+    showToast('Set an API key in Settings to polish text.');
+  } else if (applied > 0 && applied < requested) {
+    showToast(`Rewrote ${applied} of ${requested} — some text could not be rewritten.`);
+  } else if (applied === 0 && requested > 0 && !onlyLowConfidence(errors)) {
+    showToast('Could not rewrite text right now — try again.');
+  }
 }
 
 export default defineContentScript({
@@ -78,9 +145,16 @@ export default defineContentScript({
     /** Active pipeline for this page (toggle: start → pause → resume). */
     let pipeline: PolishPipeline | null = null;
 
-    /** Forward lifecycle status to the background so it can update the icon. */
+    /** Forward lifecycle status to the background (icon) and drive the HUD. */
     const reportStatus = (status: PipelineStatus): void => {
       void browser.runtime.sendMessage({ type: 'polisher-status', status }).catch(() => {});
+      if (status === 'done' && pipeline) {
+        if (pipeline.appliedCount === 0 && pipeline.requestedCount === 0) {
+          hideHud();
+        } else {
+          showHudDone(pipeline.appliedCount);
+        }
+      }
     };
 
     // 4.4: read per-navigation state from storage.session. Firefox keeps the
@@ -112,6 +186,7 @@ export default defineContentScript({
     window.addEventListener('pagehide', () => {
       pipeline?.stop();
       pipeline = null;
+      hideHud();
       dbg('pagehide');
     });
 
@@ -128,14 +203,13 @@ export default defineContentScript({
       if (!isApplyPolishMessage(message)) return undefined;
       const st = pipeline?.state ?? 'idle';
       if (st === 'idle' || st === 'done') {
-        // Start a fresh pass.
+        // Start a fresh pass; the HUD shows progress and the done state persists.
         pipeline?.stop();
-        pipeline = new PolishPipeline(window.location.hostname, reportStatus);
-        showPolishingModal();
-        // The indicator is intentionally brief (user-experience spec): it
-        // fades on its own even if a slow LLM call is still in flight, so the
-        // user is never stuck staring at a spinner for a slow batch.
-        const hideTimer = setTimeout(hidePolishingModal, MODAL_AUTO_HIDE_MS);
+        pipeline = new PolishPipeline(window.location.hostname, reportStatus, (done) => showHudRunning(done));
+        const hudEl = ensureHud();
+        hudEl.undoBtn.onclick = () => undoPolish(pipeline);
+        hudEl.closeBtn.onclick = hideHud;
+        showHudRunning(0);
         pipeline
           .start()
           .then((result) => {
@@ -151,8 +225,8 @@ export default defineContentScript({
               '; notConfigured =',
               result.notConfigured,
             );
-            clearTimeout(hideTimer);
-            hidePolishingModal();
+            if (result.notConfigured) hideHud();
+            toastFor(result.requested, result.applied, result.notConfigured, result.errors);
             sendResponse({
               ok: true,
               replaced: result.applied,
@@ -162,8 +236,7 @@ export default defineContentScript({
             } satisfies ApplyPolishResponse);
           })
           .catch(() => {
-            clearTimeout(hideTimer);
-            hidePolishingModal();
+            hideHud();
             sendResponse({ ok: false } satisfies ApplyPolishResponse);
           });
         return true; // asynchronous sendResponse

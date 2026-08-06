@@ -246,6 +246,35 @@ describe('polishRoots (per-root path)', () => {
     expect(r.notConfigured).toBe(true);
     expect(root.hasAttribute(PROCESSED_ATTR)).toBe(false);
   });
+
+  it('records applied rewrites with their originals for session undo', async () => {
+    setupArticles();
+    mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) =>
+      replyFor(
+        msg.texts.map((t) => ({ ok: true, text: t.startsWith('this is a user comment') ? 'POLISHED ONE' : 'POLISHED TWO' })),
+      ),
+    );
+    const result = await polishRoots(findUserContentRoots(document.body, 'example.com'), 'example.com');
+    expect(result.applied).toBe(2);
+    expect(result.rewrites).toHaveLength(2);
+    expect(result.rewrites[0]!.original).toBe('this is a user comment that is long enough to transform');
+    expect(result.rewrites[0]!.node.textContent).toBe('POLISHED ONE');
+  });
+
+  it('breaks down per-item failure kinds in errors', async () => {
+    setupArticles();
+    mocks.sendMessage.mockResolvedValue({
+      type: 'transform-text-result',
+      results: [
+        { ok: false, text: '', error: 'network' },
+        { ok: false, text: '', error: 'low-confidence' },
+      ],
+      notConfigured: false,
+    });
+    const result = await polishRoots(findUserContentRoots(document.body, 'example.com'), 'example.com');
+    expect(result.applied).toBe(0);
+    expect(result.errors).toEqual({ network: 1, 'low-confidence': 1 });
+  });
 });
 
 describe('edge cases', () => {

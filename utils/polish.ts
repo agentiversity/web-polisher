@@ -37,6 +37,16 @@ export interface PolishResult {
   pending: number;
   /** True when the request was a no-op because no API key is configured. */
   notConfigured: boolean;
+  /** Failure-count breakdown by error kind (see TransformResult.error). */
+  errors: Record<string, number>;
+  /** Applied rewrites with their originals, for session-level undo. */
+  rewrites: RewriteRecord[];
+}
+
+/** One applied rewrite: the text node and its pre-rewrite content. */
+export interface RewriteRecord {
+  node: Text;
+  original: string;
 }
 
 /**
@@ -165,13 +175,14 @@ export async function polishRoots(roots: Element[], hostname: string): Promise<P
     groups.push({ root, nodes });
   }
   const requested = groups.reduce((sum, g) => sum + g.nodes.length, 0);
-  if (groups.length === 0) return { requested: 0, applied: 0, blocks, pending: 0, notConfigured: false };
+  if (groups.length === 0) return { requested: 0, applied: 0, blocks, pending: 0, notConfigured: false, errors: {}, rewrites: [] };
 
   const flatNodes = groups.flatMap((g) => g.nodes);
   const texts = flatNodes.map((n) => n.textContent ?? '');
 
   const nodeResults = new Map<Text, TransformResult>();
   const appliedNodes = new Set<Text>();
+  const rewrites: RewriteRecord[] = [];
   let notConfigured = false;
   let messageFailed = false;
 
@@ -195,11 +206,15 @@ export async function polishRoots(roots: Element[], hostname: string): Promise<P
     }
     for (let i = 0; i < sliceNodes.length; i++) {
       const node = sliceNodes[i]!;
-      // Capture the parent before applyOne (replaceWith detaches the node).
+      // Capture the parent and original before applyOne overwrites the node.
       const parent = node.parentElement;
+      const original = node.textContent ?? '';
       const res = reply.results[i];
       if (res) nodeResults.set(node, res);
-      if (applyOne(node, res)) appliedNodes.add(node);
+      if (applyOne(node, res)) {
+        appliedNodes.add(node);
+        rewrites.push({ node, original });
+      }
       parent?.classList.remove(PENDING_CLASS);
     }
   }
@@ -217,14 +232,15 @@ export async function polishRoots(roots: Element[], hostname: string): Promise<P
     if (groupApplied > 0 || allOk) markProcessed(g.root);
   }
 
+  // Why did eligible nodes not get rewritten? The breakdown (low-confidence,
+  // network, rate-limit, …) drives the in-page error toast.
+  const errCounts = new Map<string, number>();
+  for (const r of nodeResults.values()) {
+    if (r && !r.ok) errCounts.set(r.error ?? 'unknown', (errCounts.get(r.error ?? 'unknown') ?? 0) + 1);
+  }
+  if (messageFailed) errCounts.set('message-failed', (errCounts.get('message-failed') ?? 0) + 1);
+
   if (applied < requested || messageFailed) {
-    // Diagnostic: why did eligible nodes not get rewritten? Breakdowns of
-    // result errors (and low-confidence rejections) help diagnose page issues.
-    const errCounts = new Map<string, number>();
-    for (const r of nodeResults.values()) {
-      if (r && !r.ok) errCounts.set(r.error ?? 'unknown', (errCounts.get(r.error ?? 'unknown') ?? 0) + 1);
-    }
-    if (messageFailed) errCounts.set('message-failed', (errCounts.get('message-failed') ?? 0) + 1);
     console.debug(
       '[Text Polisher] partial apply:',
       `applied=${applied}/${requested}`,
@@ -232,5 +248,5 @@ export async function polishRoots(roots: Element[], hostname: string): Promise<P
       JSON.stringify(Object.fromEntries(errCounts)),
     );
   }
-  return { requested, applied, blocks, pending: 0, notConfigured };
+  return { requested, applied, blocks, pending: 0, notConfigured, errors: Object.fromEntries(errCounts), rewrites };
 }

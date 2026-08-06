@@ -12,10 +12,10 @@
  * back to a single full pass, matching the pre-Phase-4 behavior.
  */
 import { findUserContentRoots } from './contentDetector';
-import { polishRoots, PROCESSED_ATTR, type PolishResult } from './polish';
+import { polishRoots, PROCESSED_ATTR, type PolishResult, type RewriteRecord } from './polish';
 import { MIN_TEXT_LENGTH, MUTATION_SCAN_BACKOFF_MAX_MS, MUTATION_SCAN_DELAY_MS, SCROLL_PAUSE_MS, VIEWPORT_MARGIN_PX } from './settings';
 
-const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false };
+const EMPTY: PolishResult = { requested: 0, applied: 0, blocks: 0, pending: 0, notConfigured: false, errors: {}, rewrites: [] };
 
 /** Lifecycle status surfaced to the UI (toolbar icon). */
 export type PipelineStatus = 'idle' | 'running' | 'paused' | 'done';
@@ -31,6 +31,9 @@ export class PolishPipeline {
   /** Serial processing chain — one root at a time, no concurrent batches. */
   private chain: Promise<void> = Promise.resolve();
   private readonly stats = { requested: 0, applied: 0, notConfigured: false };
+  private readonly errors: Record<string, number> = {};
+  private readonly rewrites: RewriteRecord[] = [];
+  private completed = 0;
   private scrollPaused = false;
   private scrollTimer: ReturnType<typeof setTimeout> | null = null;
   private mutationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -40,10 +43,16 @@ export class PolishPipeline {
   private inFlight = 0;
   private status: PipelineStatus = 'idle';
   private readonly statusCallback?: (status: PipelineStatus) => void;
+  private readonly onProgress?: (completed: number) => void;
 
-  constructor(hostname: string, statusCallback?: (status: PipelineStatus) => void) {
+  constructor(
+    hostname: string,
+    statusCallback?: (status: PipelineStatus) => void,
+    onProgress?: (completed: number) => void,
+  ) {
     this.hostname = hostname;
     this.statusCallback = statusCallback;
+    this.onProgress = onProgress;
   }
 
   get state(): PipelineStatus {
@@ -53,6 +62,26 @@ export class PolishPipeline {
   /** Current mutation re-detection backoff (exposed for tests). */
   get scanDelay(): number {
     return this.scanBackoffMs;
+  }
+
+  /** Applied rewrites with originals, for session-level undo. */
+  get undoRecords(): readonly RewriteRecord[] {
+    return this.rewrites;
+  }
+
+  /** Cumulative nodes rewritten across the pass. */
+  get appliedCount(): number {
+    return this.stats.applied;
+  }
+
+  /** Cumulative eligible nodes collected across the pass. */
+  get requestedCount(): number {
+    return this.stats.requested;
+  }
+
+  /** Cumulative failure breakdown by error kind. */
+  get errorSummary(): Record<string, number> {
+    return { ...this.errors };
   }
 
   private setState(s: PipelineStatus): void {
@@ -102,7 +131,7 @@ export class PolishPipeline {
       for (const root of all) this.enqueue(root);
       await this.chain;
       this.recomputeStatus();
-      return { ...this.stats, blocks: all.length, pending: 0 };
+      return { ...this.stats, errors: { ...this.errors }, rewrites: [...this.rewrites], blocks: all.length, pending: 0 };
     }
 
     const near: Element[] = [];
@@ -117,7 +146,7 @@ export class PolishPipeline {
     for (const root of near) this.enqueue(root);
     await this.chain;
     this.recomputeStatus();
-    return { ...this.stats, blocks: all.length, pending: this.roots.size };
+    return { ...this.stats, errors: { ...this.errors }, rewrites: [...this.rewrites], blocks: all.length, pending: this.roots.size };
   }
 
   /** Tear down observers/listeners; queued work is cancelled. */
@@ -266,6 +295,8 @@ export class PolishPipeline {
       await this.waitWhilePaused();
       if (this.stopped || el.hasAttribute(PROCESSED_ATTR)) return;
       this.accumulate(await polishRoots([el], this.hostname));
+      this.completed++;
+      this.onProgress?.(this.completed);
     } finally {
       this.inFlight--;
       this.queued.delete(el);
@@ -276,6 +307,10 @@ export class PolishPipeline {
   private accumulate(r: PolishResult): void {
     this.stats.requested += r.requested;
     this.stats.applied += r.applied;
+    this.rewrites.push(...r.rewrites);
+    for (const [kind, n] of Object.entries(r.errors)) {
+      this.errors[kind] = (this.errors[kind] ?? 0) + n;
+    }
     if (r.notConfigured) {
       this.stats.notConfigured = true;
       this.stop();

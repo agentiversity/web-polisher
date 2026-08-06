@@ -298,6 +298,26 @@ describe('PolishPipeline', () => {
     expect(result.pending).toBe(0);
   });
 
+  it('reports per-root progress through the onProgress callback', async () => {
+    body();
+    setupRects({ a: { top: 0, bottom: 100 }, b: { top: 0, bottom: 100 }, c: { top: 0, bottom: 100 } });
+    const progress: number[] = [];
+    pipe = new PolishPipeline('example.com', undefined, (n) => progress.push(n));
+    await pipe.start();
+    expect(progress).toEqual([1, 2, 3]);
+  });
+
+  it('exposes applied rewrites with originals for session undo', async () => {
+    body();
+    setupRects({ a: { top: 0, bottom: 100 }, b: { top: 5000, bottom: 5100 }, c: { top: 6000, bottom: 6100 } });
+    pipe = new PolishPipeline('example.com');
+    await pipe.start();
+    expect(pipe.appliedCount).toBe(1);
+    expect(pipe.undoRecords).toHaveLength(1);
+    expect(pipe.undoRecords[0]!.original).toContain('first comment body');
+    expect(pipe.undoRecords[0]!.node.textContent).toContain('P::first');
+  });
+
   it('is a no-op when there is no body', async () => {
     const body = document.body;
     body.remove();
