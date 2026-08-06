@@ -51,6 +51,11 @@ export class PolishPipeline {
     return this.status;
   }
 
+  /** Current mutation re-detection backoff (exposed for tests). */
+  get scanDelay(): number {
+    return this.scanBackoffMs;
+  }
+
   private setState(s: PipelineStatus): void {
     if (this.status === s) return;
     this.status = s;
@@ -188,29 +193,29 @@ export class PolishPipeline {
         this.scheduleScan();
         return;
       }
-      const found = this.scanForNewRoots();
-      // Idle backoff: when scans keep finding nothing new, space them out (up to
-      // a cap) so a churny page no longer costs sustained CPU — Firefox flags
-      // extensions whose content scripts run continuously. Any discovery (or the
-      // user scrolling, which usually precedes new content) resets the backoff.
-      if (found) {
-        this.scanBackoffMs = MUTATION_SCAN_DELAY_MS;
-      } else {
-        this.scanBackoffMs = Math.min(MUTATION_SCAN_BACKOFF_MAX_MS, this.scanBackoffMs * 2);
-      }
+      this.scanForNewRoots();
+      // Always grow the gap up to the cap, even when a scan *finds* content: a
+      // churny feed keeps producing content, so discovery is no reason to stay
+      // hot — this way an unattended live tab settles to the slow cadence
+      // instead of scanning every 250ms forever (Firefox flags extensions whose
+      // content scripts run continuously). Only scrolling (user engagement,
+      // which usually precedes new content) resets the fast cadence in onScroll.
+      this.scanBackoffMs = Math.min(MUTATION_SCAN_BACKOFF_MAX_MS, this.scanBackoffMs * 2);
     }, this.scanBackoffMs);
   }
 
   /**
-   * Scan added subtrees for new user-content roots. Returns true when at least
-   * one new root was registered (so the caller can reset the idle backoff).
+   * Scan added subtrees for new user-content roots. Nodes added under the same
+   * parent share a scan root, so each unique root is walked once — a feed that
+   * appends a batch of siblings (pagination, infinite scroll) triggers a single
+   * detection walk instead of one full-subtree walk per node.
    */
-  private scanForNewRoots(): boolean {
-    let found = false;
+  private scanForNewRoots(): void {
     const nodes = [...this.pendingNodes];
     this.pendingNodes.clear();
+    const scanRoots = new Set<Element>();
     for (const node of nodes) {
-      if (this.stopped) return found;
+      if (this.stopped) return;
       if (!node.isConnected) continue;
       const subRoot = node instanceof Element ? node : node.parentElement;
       if (!subRoot) continue;
@@ -219,14 +224,14 @@ export class PolishPipeline {
       if ((subRoot.textContent ?? '').trim().length < MIN_TEXT_LENGTH) continue;
       // Scan the added node's parent so the added element itself can be detected
       // as a top-most content root (TreeWalker never yields the scan root).
-      const scanRoot = subRoot.parentElement ?? subRoot;
-      const before = this.roots.size;
+      scanRoots.add(subRoot.parentElement ?? subRoot);
+    }
+    for (const scanRoot of scanRoots) {
+      if (this.stopped) return;
       for (const foundEl of findUserContentRoots(scanRoot, this.hostname)) {
         this.registerRoot(foundEl);
       }
-      if (this.roots.size > before) found = true;
     }
-    return found;
   }
 
   private registerRoot(el: Element): void {

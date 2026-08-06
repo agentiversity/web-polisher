@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { startPolish, stopPolish, pausePolish, resumePolish, PolishPipeline } from './pipeline';
+import { findUserContentRoots } from './contentDetector';
 import { PROCESSED_ATTR } from './textReplacer';
+import { MUTATION_SCAN_DELAY_MS, MUTATION_SCAN_BACKOFF_MAX_MS } from './settings';
 
 const mocks = vi.hoisted(() => ({ sendMessage: vi.fn() }));
 
 vi.mock('wxt/browser', () => ({
   browser: { runtime: { sendMessage: mocks.sendMessage } },
 }));
+
+// Wrap detection so tests can assert how many re-detection walks a scan runs.
+vi.mock('./contentDetector', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./contentDetector')>();
+  return { ...actual, findUserContentRoots: vi.fn(actual.findUserContentRoots) };
+});
 
 const tick = (ms = 0) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -70,6 +78,7 @@ beforeEach(() => {
   FakeIO.instances = [];
   (globalThis as Record<string, unknown>).IntersectionObserver = FakeIO;
   mocks.sendMessage.mockReset();
+  vi.mocked(findUserContentRoots).mockClear();
   mocks.sendMessage.mockImplementation(async (msg: { texts: string[] }) => ({
     type: 'transform-text-result',
     results: msg.texts.map((t) => ({ ok: true, text: `P::${t.slice(0, 6)}` })),
@@ -153,6 +162,46 @@ describe('PolishPipeline', () => {
       { timeout: 2000 },
     );
     expect(document.querySelector('[data-id="d"]')?.textContent).toContain('P::brand');
+  });
+
+  it('scans a shared parent once when a batch of siblings is added at once', async () => {
+    body();
+    setupRects({ a: { top: 0, bottom: 100 } }); // everything in view
+    await startPolish('example.com');
+    vi.mocked(findUserContentRoots).mockClear();
+
+    for (let i = 0; i < 10; i++) {
+      const el = document.createElement('article');
+      el.dataset.id = `batch-${i}`;
+      el.innerHTML = '<p>brand new batch comment that is long enough to detect here</p>';
+      document.body.appendChild(el);
+    }
+
+    await vi.waitFor(
+      () => expect(document.querySelector('[data-id="batch-9"]')?.hasAttribute(PROCESSED_ATTR)).toBe(true),
+      { timeout: 3000 },
+    );
+    // All 10 siblings share one parent, so one detection walk must cover them.
+    expect(vi.mocked(findUserContentRoots)).toHaveBeenCalledTimes(1);
+  });
+
+  it('grows the scan backoff even while new content keeps being found', async () => {
+    body();
+    setupRects({ a: { top: 0, bottom: 100 } });
+    const pipe = new PolishPipeline('example.com');
+    await pipe.start();
+    expect(pipe.scanDelay).toBe(MUTATION_SCAN_DELAY_MS);
+
+    const el = document.createElement('article');
+    el.dataset.id = 'grow';
+    el.innerHTML = '<p>another freshly mounted comment that is long enough to detect</p>';
+    document.body.appendChild(el);
+
+    // The first scan finds the new root but still backs off (no scroll reset),
+    // so an unattended live tab settles instead of scanning every 250ms.
+    await vi.waitFor(() => expect(pipe.scanDelay).toBeGreaterThan(MUTATION_SCAN_DELAY_MS), { timeout: 3000 });
+    expect(pipe.scanDelay).toBeLessThanOrEqual(MUTATION_SCAN_BACKOFF_MAX_MS);
+    pipe.stop();
   });
 
   it('defers mutation re-detection while the user is scrolling', async () => {
